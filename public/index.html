@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Chelsea Mini City</title>
+  <meta name="description" content="A cosy tabletop city-building prototype for Meta Quest 3 and desktop, set in a Chelsea-inspired neighbourhood." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M4 30V14l8-6 8 6v16z' fill='%23a9563f'/%3E%3Cpath d='M18 30V18l5-4 5 4v12z' fill='%23f0e7d4'/%3E%3C/svg%3E" />
+  <style>
+    :root {
+      --bg: #e9e3d8; --card: rgba(250, 246, 238, 0.94); --ink: #2e2a26; --soft: #7a6f63; --line: #e0d4bf;
+      --green: #2f5a45; --good: #3f8a5a; --bad: #a33b32; --gold: #c99a4a;
+      font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); }
+    canvas#scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+    .hud { position: fixed; z-index: 2; pointer-events: none; }
+    .hud > * { pointer-events: auto; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 6px 24px rgba(60, 45, 30, 0.12); }
+    #status { top: 14px; left: 14px; width: 330px; padding: 14px 16px; }
+    #status h1 { font-size: 20px; margin: 0 0 2px; letter-spacing: 0.2px; }
+    #status .note { font-size: 12px; color: var(--soft); margin: 0 0 10px; }
+    .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+    .stat { background: #fffaf1; border-radius: 10px; padding: 6px 10px; }
+    .stat span { display: block; font-size: 11px; color: var(--soft); text-transform: uppercase; letter-spacing: 0.6px; }
+    .stat b { font-size: 20px; }
+    .tickbar { height: 4px; background: #e8dcc8; border-radius: 2px; margin: 8px 0 10px; overflow: hidden; }
+    .tickbar i { display: block; height: 100%; width: 0; background: var(--gold); }
+    .goal { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+    .goal.done { color: var(--good); }
+    .bar { position: relative; height: 22px; background: #e8dcc8; border-radius: 11px; margin: 4px 0; overflow: hidden; font-size: 12px; font-weight: 700; }
+    .bar i { position: absolute; inset: 0 auto 0 0; background: #d9a54a; border-radius: 11px; }
+    .bar.full i { background: var(--good); }
+    .bar span { position: relative; display: block; text-align: center; line-height: 22px; }
+    #build { bottom: 14px; left: 50%; transform: translateX(-50%); padding: 10px; display: flex; gap: 8px; align-items: stretch; }
+    button { font: inherit; color: inherit; cursor: pointer; border: 1px solid var(--line); background: #fff; border-radius: 12px; padding: 8px 12px; }
+    button:hover { background: #f3e3c3; }
+    button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+    .tool { min-width: 128px; text-align: center; }
+    .tool b { display: block; font-size: 16px; }
+    .tool .cost { font-weight: 700; color: var(--good); }
+    .tool .cost.no { color: var(--bad); }
+    .tool small { display: block; color: var(--soft); font-size: 11px; }
+    .tool[aria-pressed="true"] { background: var(--green); color: #fff; border-color: var(--green); }
+    .tool[aria-pressed="true"] .cost { color: #ffe6a8; }
+    .tool[aria-pressed="true"] small { color: #dfe9e3; }
+    #controls { top: 14px; right: 14px; padding: 10px; display: grid; grid-template-columns: repeat(2, auto); gap: 6px; }
+    #controls button { font-size: 13px; }
+    #controls .wide { grid-column: span 2; }
+    #resetSave.armed { background: var(--bad); color: #fff; border-color: var(--bad); }
+    #message { bottom: 128px; left: 50%; transform: translateX(-50%); padding: 8px 16px; font-size: 14px; font-weight: 600; max-width: min(720px, 92vw); text-align: center; }
+    #message.error { background: #f8e1dc; color: var(--bad); }
+    #message.success { background: #e1f0e4; }
+    #message.celebrate { background: #fdf0c8; font-size: 16px; }
+    #vr { position: fixed; z-index: 3; right: 14px; bottom: 14px; padding: 10px 12px; max-width: 300px; font-size: 13px; }
+    #vr button { width: 100%; background: var(--green); color: #fff; border-color: var(--green); font-weight: 700; font-size: 16px; padding: 10px; }
+    #vr p { margin: 0; color: var(--soft); }
+    #onboarding { position: fixed; z-index: 4; inset: 0; display: grid; place-items: center; background: rgba(40, 32, 24, 0.25); }
+    #onboarding .card { width: min(440px, 92vw); padding: 22px 24px; }
+    #onboarding h2 { margin: 0 0 12px; }
+    #onboarding ol { margin: 0 0 14px; padding-left: 22px; font-size: 17px; line-height: 1.7; }
+    #onboarding p { color: var(--soft); font-size: 13px; margin: 0 0 14px; }
+    #onboarding button { background: var(--green); color: #fff; border-color: var(--green); font-weight: 700; padding: 10px 18px; }
+    #error { position: fixed; inset: 0; display: none; place-items: center; z-index: 9; background: var(--bg); padding: 24px; text-align: center; }
+    @media (max-width: 760px) {
+      #status { width: calc(100vw - 16px); left: 8px; top: 8px; padding: 8px 10px; }
+      #status h1 { font-size: 16px; }
+      #status .stats { grid-template-columns: repeat(4, 1fr); gap: 4px; }
+      .stat { padding: 4px 6px; } .stat span { font-size: 9px; } .stat b { font-size: 14px; }
+      .bar { height: 16px; font-size: 10px; } .bar span { line-height: 16px; }
+      #controls { top: auto; right: 8px; left: 8px; bottom: 76px; grid-template-columns: repeat(4, 1fr); padding: 6px; gap: 4px; }
+      #controls button { font-size: 11px; padding: 6px 4px; }
+      #controls .wide { grid-column: span 1; }
+      #build { width: calc(100vw - 16px); bottom: 8px; padding: 6px; gap: 6px; }
+      .tool { min-width: 0; flex: 1; padding: 4px; } .tool b { font-size: 14px; }
+      .tool small { display: none; }
+      #message { bottom: 166px; font-size: 12px; padding: 6px 10px; }
+      #vr { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="scene" aria-label="Miniature Chelsea neighbourhood. Drag to orbit, scroll to zoom, click a numbered plot to build."></canvas>
+
+  <section id="status" class="hud card" aria-live="polite">
+    <h1>Chelsea Mini City</h1>
+    <p class="note">Chelsea-inspired; approximate street layout</p>
+    <div class="stats">
+      <div class="stat"><span>Money</span><b id="money">£10,000</b></div>
+      <div class="stat"><span>Residents</span><b id="residents">0</b></div>
+      <div class="stat"><span>Happiness</span><b id="happiness">—</b></div>
+      <div class="stat"><span>Income / tick</span><b id="income">+£0</b></div>
+    </div>
+    <div class="tickbar" title="Next income tick (every 10 seconds of play)"><i id="tick"></i></div>
+    <div class="goal" id="goal">Goal: 50 residents &amp; 70 happiness</div>
+    <div class="bar" id="barRes"><i></i><span></span></div>
+    <div class="bar" id="barHap"><i></i><span></span></div>
+  </section>
+
+  <section id="controls" class="hud card" aria-label="View and game controls">
+    <button data-action="undo" class="wide" title="Undo last placement (Z)">↶ Undo last build</button>
+    <button data-action="rotL" title="Rotate model (Q)">↺ Rotate</button>
+    <button data-action="rotR" title="Rotate model (E)">Rotate ↻</button>
+    <button data-action="scaleDown" title="Smaller model (-)">− Smaller</button>
+    <button data-action="scaleUp" title="Larger model (+)">+ Larger</button>
+    <button data-action="resetView" class="wide" title="Reset camera and model (R)">Reset view</button>
+    <button data-action="resetSave" id="resetSave" class="wide">Reset save</button>
+    <button data-action="help" class="wide">How to play</button>
+  </section>
+
+  <div id="message" class="hud card" role="status"></div>
+
+  <section id="build" class="hud card" aria-label="Build menu">
+    <button class="tool" data-action="tool:townhouse" aria-pressed="false"><b>Townhouse</b><span class="cost">£1,000</span><small>+10 residents, +£100/tick</small></button>
+    <button class="tool" data-action="tool:shop" aria-pressed="false"><b>Shop</b><span class="cost">£1,500</span><small>+£200/tick near homes</small></button>
+    <button class="tool" data-action="tool:park" aria-pressed="false"><b>Park</b><span class="cost">£750</span><small>+10 happiness nearby</small></button>
+  </section>
+
+  <section id="vr" class="hud card"><p>Checking for VR support…</p></section>
+
+  <div id="onboarding" hidden>
+    <div class="card" role="dialog" aria-labelledby="obTitle">
+      <h2 id="obTitle">Welcome to Chelsea Mini City</h2>
+      <ol>
+        <li>Choose a building.</li>
+        <li>Point at an empty plot.</li>
+        <li>Build a happier Chelsea.</li>
+      </ol>
+      <p>Goal: reach 50 residents and an average happiness of 70. Homes start at 50 happiness; a shop within 80 m adds 10 and each park within 80 m adds 10. <b>Tip:</b> give every home a park and a shop nearby, or two parks. The ring shows each shop's or park's reach. Income arrives every 10 seconds of play.</p>
+      <button id="obClose">Start building</button>
+    </div>
+  </div>
+
+  <div id="error"></div>
+  <script src="./main.js"></script>
+</body>
+</html>

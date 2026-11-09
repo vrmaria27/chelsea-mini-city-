@@ -1,0 +1,24 @@
+{
+  "name": "chelsea-mini-city",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A cosy tabletop city-building prototype for Meta Quest 3 (WebXR) with a desktop fallback.",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "tsc --noEmit && node scripts/build.mjs",
+    "preview": "node scripts/dev.mjs --preview",
+    "test": "tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
