@@ -1,8 +1,9 @@
 // Entry point: wires the game, 3D scene, desktop controls and WebXR session together.
 import { invert, lookAt, mat4, multiply, perspective, transformPoint, type Ray, type Vec3 } from './engine/math';
-import { BUILDINGS, BUILDING_TYPES, RULES, type BuildingType } from './sim/rules';
+import { BUILDINGS, BUILDING_TYPES } from './sim/rules';
 import { formatHappiness, formatMoney } from './sim/simulation';
-import { Game, safeLocalStorage } from './game/game';
+import { Game, safeLocalStorage, type Tool } from './game/game';
+import { inspectorView } from './game/inspectView';
 import { CityScene, SCALE_MAX, SCALE_MIN, defaultView, type Hit, type PointerVisual } from './game/scene';
 import type { Action } from './game/panel';
 
@@ -24,7 +25,8 @@ try {
 }
 const gl = scene.r.gl;
 const store = safeLocalStorage();
-const game = new Game(store);
+const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+const game = new Game(store, () => performance.now(), prefersReducedMotion);
 const ROT_STEP = Math.PI / 12; // 15°
 
 // ---------------------------------------------------------------------------------------------
@@ -33,13 +35,26 @@ const ROT_STEP = Math.PI / 12; // 15°
 let xrSession: XRSession | null = null;
 let recenterPending = false;
 
+let lastPanelActionAt = 0;
+
 function doAction(a: Action | 'help'): void {
   const v = scene.view;
+  if (a.startsWith('tool:')) {
+    game.select(a.slice(5) as Tool);
+    return;
+  }
   switch (a) {
-    case 'tool:townhouse':
-    case 'tool:shop':
-    case 'tool:park':
-      game.select(a.slice(5) as BuildingType);
+    case 'upgrade':
+      game.upgradeInspected();
+      break;
+    case 'closeInspect':
+      game.inspect(null);
+      break;
+    case 'toggleMotion':
+      game.setPref('reducedMotion', !game.prefs.reducedMotion);
+      break;
+    case 'toggleDetail':
+      game.setPref('lowDetail', !game.prefs.lowDetail);
       break;
     case 'undo':
       game.undo();
@@ -81,6 +96,7 @@ function doAction(a: Action | 'help'): void {
   }
   scene.updateMatrices();
   scene.panel.dirty = true;
+  scene.inspector.dirty = true;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -88,19 +104,16 @@ function doAction(a: Action | 'help'): void {
 
 const ui = {
   money: $('money'), residents: $('residents'), happiness: $('happiness'), income: $('income'),
-  tick: $('tick'), goal: $('goal'), barRes: $('barRes'), barHap: $('barHap'), message: $('message'),
-  resetSave: $('resetSave'),
+  tick: $('tick'), chapter: $('chapter'), goals: $('goals'), hint: $('hint'), message: $('message'),
+  inspector: $('inspector'), motion: $('toggleMotion'), detail: $('toggleDetail'),
 };
 
-document.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((b) =>
-  b.addEventListener('click', () => doAction(b.dataset.action as Action)),
-);
+document.addEventListener('click', (e) => {
+  const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-action]');
+  if (b && !b.disabled) doAction(b.dataset.action as Action);
+});
 
-function setBar(el: HTMLElement, frac: number, text: string): void {
-  (el.firstElementChild as HTMLElement).style.width = `${Math.round(frac * 100)}%`;
-  (el.lastElementChild as HTMLElement).textContent = text;
-  el.classList.toggle('full', frac >= 1);
-}
+const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
 function renderHud(): void {
   const s = game.stats;
@@ -108,30 +121,68 @@ function renderHud(): void {
   ui.residents.textContent = String(s.residents);
   ui.happiness.textContent = formatHappiness(s.happiness);
   ui.income.textContent = '+' + formatMoney(s.incomePerTick);
-  const p = game.objectiveProgress();
-  const o = RULES.objective;
-  ui.goal.textContent = game.state.objectiveReached ? '★ Objective reached — keep building!' : `Goal: ${o.residents} residents & ${o.happiness} happiness`;
-  ui.goal.classList.toggle('done', game.state.objectiveReached);
-  setBar(ui.barRes, p.residents, `Residents ${s.residents} / ${o.residents}`);
-  setBar(ui.barHap, p.happiness, `Avg happiness ${formatHappiness(s.happiness)} / ${o.happiness}`);
-  for (const t of BUILDING_TYPES) {
+
+  // Chapter progression
+  const ch = game.chapterView();
+  ui.chapter.textContent = ch.done ? `★ ${ch.title}` : `Chapter ${ch.index + 1} of 3 · ${ch.title}`;
+  ui.chapter.classList.toggle('done', ch.done);
+  ui.goals.innerHTML = ch.goals
+    .map((g) => {
+      const pct = Math.round(Math.min(1, g.current / g.target) * 100);
+      return `<div class="bar${g.done ? ' full' : ''}" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(g.label)}"><i style="width:${pct}%"></i><span>${g.done ? '✓ ' : ''}${esc(g.label)} ${esc(g.display)} / ${g.target}</span></div>`;
+    })
+    .join('');
+  ui.hint.textContent = ch.hint;
+  document.querySelectorAll<HTMLElement>('.chapter-dots i').forEach((d, i) => d.classList.toggle('on', i < game.state.chapter));
+
+  for (const t of [...BUILDING_TYPES, 'inspect'] as Tool[]) {
     const btn = document.querySelector<HTMLButtonElement>(`[data-action="tool:${t}"]`)!;
-    btn.setAttribute('aria-pressed', String(game.selected === t));
-    btn.querySelector('.cost')!.classList.toggle('no', game.state.money < BUILDINGS[t].cost);
+    btn.setAttribute('aria-pressed', String(game.tool === t));
+    if (t !== 'inspect') btn.querySelector('.cost')!.classList.toggle('no', game.state.money < BUILDINGS[t].cost);
   }
   const pv = game.preview();
   const fresh = performance.now() - game.message.at < 2500;
-  const m = pv && !fresh ? { text: pv.text + (pv.ok ? ' — click to build' : ''), kind: pv.ok ? 'info' : 'error' } : game.message;
+  const m = pv && !fresh ? { text: pv.text, kind: pv.ok ? 'info' : 'error' } : game.message;
   ui.message.textContent = m.text;
   ui.message.className = `hud card ${m.kind}`;
-  ui.resetSave.textContent = 'Reset save…';
+  ui.motion.setAttribute('aria-pressed', String(game.prefs.reducedMotion));
+  ui.motion.textContent = `Reduced motion: ${game.prefs.reducedMotion ? 'On' : 'Off'}`;
+  ui.detail.setAttribute('aria-pressed', String(game.prefs.lowDetail));
+  ui.detail.textContent = `Low detail: ${game.prefs.lowDetail ? 'On' : 'Off'}`;
+  renderInspector();
+}
+
+let inspectorHtml = '';
+function renderInspector(): void {
+  const v = inspectorView(game);
+  const html = `
+    <div class="ins-head"><h2>${esc(v.title)}</h2>${v.mode === 'inspect' ? '<button data-action="closeInspect" aria-label="Close inspector">✕</button>' : ''}</div>
+    ${v.level === 2 ? '<p class="lvl2">★ Level 2 (fully upgraded)</p>' : `<p class="sub">${esc(v.subtitle)}</p>`}
+    ${v.stats.length ? `<div class="ins-stats">${v.stats.map((x) => `<div><span>${esc(x.label)}</span><b>${esc(x.value)}</b></div>`).join('')}</div>` : ''}
+    ${v.rows.length ? `<ul class="rows">${v.rows.map((r) => `<li><span>${esc(r.label)}</span>${r.value ? `<b class="${r.value.startsWith('−') || r.value.startsWith('-') ? 'neg' : ''}">${esc(r.value)}</b>` : ''}</li>`).join('')}</ul>` : ''}
+    ${v.nearby.map((n) => `<p class="near">${esc(n)}</p>`).join('')}
+    <p class="hint ${v.hintKind}">${v.hintKind === 'warn' ? '! ' : v.hintKind === 'good' ? '✓ ' : '→ '}${esc(v.hint)}</p>
+    ${v.upgrade ? `<button class="upgrade" data-action="upgrade" ${v.upgrade.enabled ? '' : 'disabled'}>${esc(v.upgrade.label)}</button>
+      ${v.upgrade.effects.length ? `<ul class="effects">${v.upgrade.effects.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}
+      ${!v.upgrade.enabled && v.upgrade.reason ? `<p class="reason">${esc(v.upgrade.reason)}</p>` : ''}` : ''}`;
+  if (html !== inspectorHtml) {
+    inspectorHtml = html;
+    ui.inspector.innerHTML = html;
+  }
+  ui.inspector.classList.toggle('idle', v.mode === 'idle');
 }
 
 game.subscribe(() => {
+  scene.reducedMotion = game.prefs.reducedMotion;
+  scene.lowDetail = game.prefs.lowDetail;
   renderHud();
   scene.panel.dirty = true;
+  scene.inspector.dirty = true;
 });
-game.onCelebrate = () => scene.celebrate();
+game.onChapterComplete = (i) => scene.celebrate(i >= 2 ? 'All chapters complete!' : `Chapter ${i + 1} complete!`);
+game.onBuildEffect = (kind, plotId) => scene.pulse(kind, plotId);
+scene.reducedMotion = game.prefs.reducedMotion;
+scene.lowDetail = game.prefs.lowDetail;
 renderHud();
 
 const OB_KEY = 'chelsea-mini-city.onboarded';
@@ -244,7 +295,7 @@ const endPointer = (e: PointerEvent) => {
           return;
         }
       }
-      game.place(hit.plotId);
+      game.activatePlot(hit.plotId);
     }
   }
   if (pointers.size < 2) pinchDist = 0;
@@ -272,13 +323,18 @@ window.addEventListener('keydown', (e) => {
   if ((e.target as HTMLElement).tagName === 'INPUT') return;
   const k = e.key.toLowerCase();
   if (k === '1' || k === '2' || k === '3') doAction(`tool:${BUILDING_TYPES[+k - 1]}`);
+  else if (k === '4' || k === 'i') doAction('tool:inspect');
+  else if (k === 'u') doAction('upgrade');
   else if (k === 'z') doAction('undo');
   else if (k === 'q') doAction('rotL');
   else if (k === 'e') doAction('rotR');
   else if (k === '-' || k === '_') doAction('scaleDown');
   else if (k === '+' || k === '=') doAction('scaleUp');
   else if (k === 'r') doAction('resetView');
-  else if (k === 'escape') $('onboarding').hidden = true;
+  else if (k === 'escape') {
+    if (!$('onboarding').hidden) $('onboarding').hidden = true;
+    else doAction('closeInspect');
+  }
 });
 
 function clamp(v: number, a: number, b: number): number {
@@ -316,6 +372,7 @@ function stepSim(time: number, active: boolean): number {
     hudTimer = 0;
     ui.tick.style.width = `${Math.round(game.clock.progress * 100)}%`;
     scene.panel.dirty = true;
+    scene.inspector.dirty = true;
     if (!xrSession && game.preview()) renderHud();
   }
   return dt;
@@ -327,6 +384,7 @@ function desktopFrame(time: number): void {
   const dt = stepSim(time, true);
   resize();
   scene.sync(game);
+  scene.tick(dt);
   updateDesktopCamera();
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.viewport(0, 0, canvas.width, canvas.height);
@@ -422,8 +480,13 @@ function onSelect(ev: XRInputSourceEvent): void {
   const st = ctrls.get(ev.inputSource);
   const hit = st?.hit;
   if (!hit) return;
-  if (hit.kind === 'panel' && hit.action) doAction(hit.action);
-  else if (hit.kind === 'plot') game.place(hit.plotId);
+  if (hit.kind === 'panel') {
+    // A panel always swallows the selection, even between buttons, so nothing behind it is built.
+    lastPanelActionAt = performance.now();
+    if (hit.action) doAction(hit.action);
+  } else if (hit.kind === 'plot' && performance.now() - lastPanelActionAt > 300) {
+    game.activatePlot(hit.plotId);
+  }
 }
 
 /** Places the table in front of the player at a comfortable height (works seated or standing). */
@@ -484,7 +547,9 @@ function xrFrame(time: number, frame: XRFrame): void {
     handleThumbstick(src, st);
   }
   scene.panel.setHover(panelHover);
+  scene.inspector.setHover(panelHover);
   game.setHover(plotHover);
+  scene.tick(dt);
 
   // Draw both eyes
   const layer = session.renderState.baseLayer!;
@@ -518,4 +583,4 @@ function handleThumbstick(src: XRInputSource, st: CtrlState): void {
 }
 
 // Expose a tiny debug hook for automated desktop checks.
-(window as unknown as { __cmc: unknown }).__cmc = { game, scene, doAction };
+(window as unknown as { __cmc: unknown }).__cmc = { game, scene, doAction, cam };

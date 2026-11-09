@@ -54,6 +54,36 @@
     #message.error { background: #f8e1dc; color: var(--bad); }
     #message.success { background: #e1f0e4; }
     #message.celebrate { background: #fdf0c8; font-size: 16px; }
+    .chapter-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .chapter-dots { display: flex; gap: 4px; }
+    .chapter-dots i { width: 10px; height: 10px; border-radius: 50%; background: #e8dcc8; border: 1px solid #cdbb98; }
+    .chapter-dots i.on { background: var(--good); border-color: var(--good); }
+    .next { margin: 6px 0 0; font-size: 12.5px; background: #fdf6e3; border-radius: 8px; padding: 6px 8px; line-height: 1.35; }
+    .next::before { content: "Next: "; font-weight: 700; }
+    #inspector { top: 404px; right: 14px; width: 300px; padding: 12px 14px; font-size: 13px; max-height: calc(100vh - 520px); overflow: auto; }
+    #inspector.idle { opacity: 0.88; }
+    #inspector h2 { font-size: 16px; margin: 0; }
+    #inspector .ins-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    #inspector .ins-head button { padding: 2px 9px; }
+    #inspector .sub { color: var(--soft); margin: 2px 0 8px; }
+    #inspector .lvl2 { display: inline-block; background: #e8b84a; color: #3b2e10; font-weight: 700; border-radius: 10px; padding: 2px 10px; margin: 4px 0 8px; }
+    .ins-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 8px; }
+    .ins-stats div { background: #fffaf1; border-radius: 8px; padding: 4px 6px; }
+    .ins-stats span { display: block; font-size: 10px; color: var(--soft); text-transform: uppercase; }
+    .ins-stats b { font-size: 16px; }
+    #inspector ul { list-style: none; padding: 0; margin: 0 0 6px; }
+    #inspector .rows li { display: flex; justify-content: space-between; gap: 6px; border-bottom: 1px solid var(--line); padding: 3px 0; }
+    #inspector .rows b { color: var(--good); } #inspector .rows b.neg { color: var(--bad); }
+    #inspector .near { color: var(--soft); margin: 4px 0; }
+    #inspector .hint { border-radius: 8px; padding: 6px 8px; margin: 8px 0; background: #fdf6e3; font-weight: 600; }
+    #inspector .hint.warn { background: #f8e1dc; color: var(--bad); }
+    #inspector .hint.good { background: #e1f0e4; }
+    #inspector .upgrade { width: 100%; background: var(--green); color: #fff; border-color: var(--green); font-weight: 700; padding: 9px; }
+    #inspector .upgrade:disabled { background: #ece6dc; color: #9a9087; border-color: var(--line); cursor: not-allowed; }
+    #inspector .effects li { padding: 2px 0; } #inspector .effects li::before { content: "• "; }
+    #inspector .reason { color: var(--bad); margin: 4px 0 0; font-weight: 600; }
+    #controls [aria-pressed="true"] { background: var(--green); color: #fff; border-color: var(--green); }
+    .tool.inspect .cost { color: var(--soft); font-weight: 600; }
     #vr { position: fixed; z-index: 3; right: 14px; bottom: 14px; padding: 10px 12px; max-width: 300px; font-size: 13px; }
     #vr button { width: 100%; background: var(--green); color: #fff; border-color: var(--green); font-weight: 700; font-size: 16px; padding: 10px; }
     #vr p { margin: 0; color: var(--soft); }
@@ -78,6 +108,11 @@
       .tool small { display: none; }
       #message { bottom: 166px; font-size: 12px; padding: 6px 10px; }
       #vr { display: none; }
+      #status .next, #goals .bar:nth-child(n+2) { display: none; }
+      #inspector { top: auto; bottom: 214px; left: 8px; right: 8px; width: auto; max-height: 34vh; }
+      #inspector.idle { display: none; }
+      #controls { grid-template-columns: repeat(5, 1fr); }
+      #controls #toggleMotion, #controls #toggleDetail { display: none; }
     }
   </style>
 </head>
@@ -94,21 +129,25 @@
       <div class="stat"><span>Income / tick</span><b id="income">+£0</b></div>
     </div>
     <div class="tickbar" title="Next income tick (every 10 seconds of play)"><i id="tick"></i></div>
-    <div class="goal" id="goal">Goal: 50 residents &amp; 70 happiness</div>
-    <div class="bar" id="barRes"><i></i><span></span></div>
-    <div class="bar" id="barHap"><i></i><span></span></div>
+    <div class="chapter-head"><div class="goal" id="chapter">Chapter 1 of 3</div><div class="chapter-dots" aria-hidden="true"><i></i><i></i><i></i></div></div>
+    <div id="goals"></div>
+    <p class="next" id="hint"></p>
   </section>
 
   <section id="controls" class="hud card" aria-label="View and game controls">
-    <button data-action="undo" class="wide" title="Undo last placement (Z)">↶ Undo last build</button>
+    <button data-action="undo" class="wide" title="Undo the last build or upgrade (Z)">↶ Undo last action</button>
     <button data-action="rotL" title="Rotate model (Q)">↺ Rotate</button>
     <button data-action="rotR" title="Rotate model (E)">Rotate ↻</button>
     <button data-action="scaleDown" title="Smaller model (-)">− Smaller</button>
     <button data-action="scaleUp" title="Larger model (+)">+ Larger</button>
     <button data-action="resetView" class="wide" title="Reset camera and model (R)">Reset view</button>
     <button data-action="resetSave" id="resetSave" class="wide">Reset save</button>
+    <button data-action="toggleMotion" id="toggleMotion" class="wide" aria-pressed="false">Reduced motion: Off</button>
+    <button data-action="toggleDetail" id="toggleDetail" class="wide" aria-pressed="false">Low detail: Off</button>
     <button data-action="help" class="wide">How to play</button>
   </section>
+
+  <section id="inspector" class="hud card idle" aria-live="polite" aria-label="Inspector"></section>
 
   <div id="message" class="hud card" role="status"></div>
 
@@ -116,6 +155,7 @@
     <button class="tool" data-action="tool:townhouse" aria-pressed="false"><b>Townhouse</b><span class="cost">£1,000</span><small>+10 residents, +£100/tick</small></button>
     <button class="tool" data-action="tool:shop" aria-pressed="false"><b>Shop</b><span class="cost">£1,500</span><small>+£200/tick near homes</small></button>
     <button class="tool" data-action="tool:park" aria-pressed="false"><b>Park</b><span class="cost">£750</span><small>+10 happiness nearby</small></button>
+    <button class="tool inspect" data-action="tool:inspect" aria-pressed="false"><b>Inspect</b><span class="cost">details</span><small>&amp; upgrades</small></button>
   </section>
 
   <section id="vr" class="hud card"><p>Checking for VR support…</p></section>
@@ -128,7 +168,7 @@
         <li>Point at an empty plot.</li>
         <li>Build a happier Chelsea.</li>
       </ol>
-      <p>Goal: reach 50 residents and an average happiness of 70. Homes start at 50 happiness; a shop within 80 m adds 10 and each park within 80 m adds 10. <b>Tip:</b> give every home a park and a shop nearby, or two parks. The ring shows each shop's or park's reach. Income arrives every 10 seconds of play.</p>
+      <p>Homes start at 50 happiness; a shop within 80 m adds 10 and each park within 80 m adds 10. Hover a plot to see the exact effect before you buy. Use <b>Inspect</b> to see why a building is (or isn't) doing well, and to <b>upgrade</b> it to Level 2. Work through three neighbourhood chapters; income arrives every 10 seconds of play.</p>
       <button id="obClose">Start building</button>
     </div>
   </div>

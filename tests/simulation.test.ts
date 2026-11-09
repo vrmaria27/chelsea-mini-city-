@@ -96,11 +96,11 @@ test('undo refunds the purchase cost but keeps tick income', () => {
   if (!u.ok) return;
   assert.equal(u.state.money, before + BUILDINGS.shop.cost);
   assert.equal(u.state.buildings.p2, undefined);
-  assert.equal(u.state.buildings.p1, 'townhouse');
+  assert.deepEqual(u.state.buildings.p1, { type: 'townhouse', level: 1 });
   assert.equal(sim.undo(u.state).ok, false, 'only the most recent placement can be undone');
 });
 
-test('objective: 50 residents and 70 average happiness is achievable from the start', () => {
+test('chapter 1: 50 residents and 70 average happiness is achievable from the start', () => {
   // Symons cluster: central park, second park and shop on the edge; five homes around them.
   const plan: [string, BuildingType][] = [
     ['p11', 'park'], ['p8', 'park'], ['p14', 'shop'],
@@ -112,8 +112,9 @@ test('objective: 50 residents and 70 average happiness is achievable from the st
   const st = sim.stats(s);
   assert.equal(st.residents, 50);
   assert.ok((st.happiness ?? 0) >= 70, `happiness ${st.happiness}`);
-  assert.equal(s.objectiveReached, true);
-  assert.equal(sim.undo(s).ok && (sim.undo(s) as { state: GameState }).state.objectiveReached, true, 'celebration not repeated after undo');
+  assert.ok(s.chapter >= 1, 'chapter 1 complete');
+  const u = sim.undo(s);
+  assert.ok(u.ok && u.state.chapter >= 1, 'completion is never revoked by undo');
 });
 
 test('tick clock: every 10 s of active play, clamps large gaps', () => {

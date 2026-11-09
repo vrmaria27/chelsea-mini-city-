@@ -34,6 +34,28 @@ void main() {
   outColor = vec4(c, uAlpha);
 }`;
 
+// Instanced variant: per-instance position + yaw (vec4) and colour (vec3). Vertices whose
+// colour is pure white take the instance colour (clothing / car paint); others keep theirs.
+const INST_VS = `#version 300 es
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec3 aNormal;
+layout(location=2) in vec3 aColor;
+layout(location=3) in vec4 iPosYaw;
+layout(location=4) in vec3 iColor;
+uniform mat4 uViewProj;
+uniform mat4 uModel;
+out vec3 vColor;
+out vec3 vNormal;
+void main() {
+  float c = cos(iPosYaw.w), s = sin(iPosYaw.w);
+  vec3 p = vec3(aPos.x * c + aPos.z * s, aPos.y, -aPos.x * s + aPos.z * c) + iPosYaw.xyz;
+  vec3 n = vec3(aNormal.x * c + aNormal.z * s, aNormal.y, -aNormal.x * s + aNormal.z * c);
+  float marker = step(0.995, min(aColor.r, min(aColor.g, aColor.b)));
+  vColor = mix(aColor, iColor, marker);
+  vNormal = mat3(uModel) * n;
+  gl_Position = uViewProj * uModel * vec4(p, 1.0);
+}`;
+
 const TEX_VS = `#version 300 es
 layout(location=0) in vec3 aPos;
 layout(location=1) in vec2 aUV;
@@ -65,6 +87,14 @@ export interface Mesh {
   kind: 'lit' | 'tex';
 }
 
+export interface InstancedMesh {
+  vao: WebGLVertexArrayObject;
+  count: number;
+  instanceBuffer: WebGLBuffer;
+  instances: number;
+  max: number;
+}
+
 interface Program {
   prog: WebGLProgram;
   u: Record<string, WebGLUniformLocation | null>;
@@ -85,6 +115,7 @@ export class Renderer {
   readonly gl: WebGL2RenderingContext;
   private lit: Program;
   private tex: Program;
+  private inst: Program;
   private viewProj: Mat4 = new Float32Array(16);
   sunDir: [number, number, number];
 
@@ -94,6 +125,7 @@ export class Renderer {
     this.gl = gl;
     this.lit = this.program(LIT_VS, LIT_FS, ['uViewProj', 'uModel', 'uSunDir', 'uTint', 'uAlpha', 'uUnlit']);
     this.tex = this.program(TEX_VS, TEX_FS, ['uViewProj', 'uModel', 'uTex', 'uAlpha']);
+    this.inst = this.program(INST_VS, LIT_FS, ['uViewProj', 'uModel', 'uSunDir', 'uTint', 'uAlpha', 'uUnlit']);
     const s = [0.45, 0.8, 0.4];
     const l = Math.hypot(s[0], s[1], s[2]);
     this.sunDir = [s[0] / l, s[1] / l, s[2] / l];
@@ -152,6 +184,54 @@ export class Renderer {
     });
     gl.bindVertexArray(null);
     return { vao, buffer, count: data.length / stride, mode: mode ?? gl.TRIANGLES, kind };
+  }
+
+  /** Base geometry ([pos3, normal3, color3]) drawn many times; instance data is [x, y, z, yaw, r, g, b]. */
+  instancedMesh(base: Float32Array, max: number): InstancedMesh {
+    const gl = this.gl;
+    const vao = gl.createVertexArray()!;
+    gl.bindVertexArray(vao);
+    const vb = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, vb);
+    gl.bufferData(gl.ARRAY_BUFFER, base, gl.STATIC_DRAW);
+    [3, 3, 3].reduce((off, size, i) => {
+      gl.enableVertexAttribArray(i);
+      gl.vertexAttribPointer(i, size, gl.FLOAT, false, 36, off * 4);
+      return off + size;
+    }, 0);
+    const ib = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, ib);
+    gl.bufferData(gl.ARRAY_BUFFER, max * 7 * 4, gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(3);
+    gl.vertexAttribPointer(3, 4, gl.FLOAT, false, 28, 0);
+    gl.vertexAttribDivisor(3, 1);
+    gl.enableVertexAttribArray(4);
+    gl.vertexAttribPointer(4, 3, gl.FLOAT, false, 28, 16);
+    gl.vertexAttribDivisor(4, 1);
+    gl.bindVertexArray(null);
+    return { vao, count: base.length / 9, instanceBuffer: ib, instances: 0, max };
+  }
+
+  updateInstances(mesh: InstancedMesh, data: Float32Array, instances: number): void {
+    const gl = this.gl;
+    mesh.instances = Math.min(instances, mesh.max);
+    gl.bindBuffer(gl.ARRAY_BUFFER, mesh.instanceBuffer);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, data, 0, mesh.instances * 7);
+  }
+
+  drawInstanced(mesh: InstancedMesh, model: Mat4): void {
+    if (!mesh.instances) return;
+    const gl = this.gl;
+    const { prog, u } = this.inst;
+    gl.useProgram(prog);
+    gl.uniformMatrix4fv(u.uViewProj, false, this.viewProj);
+    gl.uniformMatrix4fv(u.uModel, false, model);
+    gl.uniform3fv(u.uSunDir, this.sunDir);
+    gl.uniform4f(u.uTint, 0, 0, 0, 0);
+    gl.uniform1f(u.uAlpha, 1);
+    gl.uniform1f(u.uUnlit, 0);
+    gl.bindVertexArray(mesh.vao);
+    gl.drawArraysInstanced(gl.TRIANGLES, 0, mesh.count, mesh.instances);
   }
 
   createTexture(source: TexImageSource): WebGLTexture {

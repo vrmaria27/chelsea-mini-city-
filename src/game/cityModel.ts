@@ -4,8 +4,8 @@ import {
   BLOCKS, DUKE_OF_YORK_SQUARE, GALLERY, LABELS, MAP_HALF, PLOTS, ROADS, ROAD_LABEL_COLOR, SLOANE_SQUARE,
   facingAngle, reservedRects, type Facing, type PlotDef, type Rect,
 } from '../map/chelsea';
-import type { BuildingType } from '../sim/rules';
-import type { Stats } from '../sim/simulation';
+import type { BuildingType, Level } from '../sim/rules';
+import type { Building, Stats } from '../sim/simulation';
 import { MeshBuilder, hex, rng, shade, type RGB } from '../engine/geometry';
 import { compose, mat4 } from '../engine/math';
 import { buildAtlas, pushFlatLabel, type LabelStyle } from '../engine/text';
@@ -56,7 +56,7 @@ const tmpM = mat4();
 // ---------------------------------------------------------------------------------------------
 // Reusable pieces (local frame: front faces +z, front wall at z = 0, building extends to -depth)
 
-function terraceHouse(b: MeshBuilder, x0: number, x1: number, depth: number, h: number, wall: RGB, roof: RGB, door: RGB, brick: boolean): void {
+function terraceHouse(b: MeshBuilder, x0: number, x1: number, depth: number, h: number, wall: RGB, roof: RGB, door: RGB, brick: boolean, rich = false): void {
   const w = x1 - x0;
   b.box(x0, 0, -depth, x1, h, 0, wall);
   // Stucco ground floor on brick houses (a common London terrace look)
@@ -77,6 +77,18 @@ function terraceHouse(b: MeshBuilder, x0: number, x1: number, depth: number, h: 
   }
   const dx = x0 + w / (cols * 2);
   b.quad([dx - 0.6, 0, 0.14], [dx + 0.6, 0, 0.14], [dx + 0.6, 2.5, 0.14], [dx - 0.6, 2.5, 0.14], door);
+  if (rich) {
+    // Level 2: white columned porch, stucco cornice and flower-filled window boxes
+    b.box(dx - 1.1, 3.0, 0, dx + 1.1, 3.4, 1.3, P.stucco);
+    b.cylinder(dx - 0.85, 1.05, 0, 3.0, 0.16, 6, P.stucco, false);
+    b.cylinder(dx + 0.85, 1.05, 0, 3.0, 0.16, 6, P.stucco, false);
+    b.box(x0, h - 0.7, 0, x1, h - 0.2, 0.45, P.stucco);
+    for (let c = 0; c < cols; c++) {
+      const cx = x0 + (w * (c + 0.5)) / cols;
+      b.box(cx - 0.75, 4.15, 0.1, cx + 0.75, 4.55, 0.6, P.bench);
+      b.box(cx - 0.7, 4.55, 0.15, cx + 0.7, 4.85, 0.55, c % 2 ? FLOWER_A : FLOWER_B);
+    }
+  }
   // Pitched roof along the street, small eaves
   b.gable(x0 - 0.05, -depth - 0.3, x1 + 0.05, 0.3, h, 3.2, roof, true, wall);
 }
@@ -108,7 +120,10 @@ function fountain(b: MeshBuilder, x: number, z: number, y: number, r: number): v
 // ---------------------------------------------------------------------------------------------
 // Plot buildings (local frame centred on the plot, front toward +z)
 
-export function buildingMesh(type: BuildingType, variant = 0): MeshBuilder {
+const FLOWER_A = hex('#e07a8f'), FLOWER_B = hex('#f2c14e'), FLOWER_C = hex('#a77bd6');
+
+export function buildingMesh(type: BuildingType, variant = 0, level: Level = 1): MeshBuilder {
+  const l2 = level === 2;
   const b = new MeshBuilder();
   const r = rng(1000 + variant * 31 + (type === 'shop' ? 7 : type === 'park' ? 13 : 0));
   const half = 12;
@@ -116,18 +131,25 @@ export function buildingMesh(type: BuildingType, variant = 0): MeshBuilder {
     b.flat(-half, -half, half, half, PLOT_Y, P.lawn);
     const brick = P.bricks[variant % P.bricks.length];
     const roof = P.slate[variant % P.slate.length];
-    const h = 12.5 + (variant % 3) * 0.8;
+    const h = 12.5 + (variant % 3) * 0.8 + (l2 ? 3.3 : 0); // Level 2 adds a storey
     const depth = 12;
     b.setTransform(compose(tmpM, 0, PLOT_Y, 9.5));
     const xs = [-11, -3.6, 3.6, 11];
     for (let i = 0; i < 3; i++) {
       const wall = i === 1 && variant % 2 ? P.creams[variant % 3] : brick;
-      terraceHouse(b, xs[i], xs[i + 1], depth, h, wall, roof, P.doors[(variant + i) % P.doors.length], wall === brick);
+      terraceHouse(b, xs[i], xs[i + 1], depth, h, wall, roof, P.doors[(variant + i) % P.doors.length], wall === brick, l2);
     }
     for (const cx of [-3.6, 3.6]) chimney(b, cx, -depth / 2, h);
     // front railings + steps
     b.box(-11, 0, 1.6, 11, 1.0, 1.8, hex('#2b2b2e'));
     b.setTransform(null);
+    if (l2) {
+      // front-garden planters and clipped bay trees
+      for (const x of [-9.5, -1.8, 5.4]) {
+        b.box(x - 0.8, PLOT_Y, 11.4, x + 0.8, PLOT_Y + 0.7, 12, P.stucco);
+        b.blob(x, PLOT_Y + 1.6, 11.7, 0.75, 0.9, P.greens[3]);
+      }
+    }
     // back garden tree
     tree(b, -6 + r() * 12, -8.5, PLOT_Y, 0.7, P.greens[variant % 4], r());
   } else if (type === 'shop') {
@@ -141,18 +163,24 @@ export function buildingMesh(type: BuildingType, variant = 0): MeshBuilder {
     b.gable(-w + 1, -d + 1, w - 1, -1, h + 0.9, 2.2, P.slate[0], true, wall);
     // shopfront glass and sign band
     b.quad([-w + 1, 0.3, 0.1], [w - 1, 0.3, 0.1], [w - 1, 3.4, 0.1], [-w + 1, 3.4, 0.1], P.glass);
-    b.box(-w, 3.5, 0, w, 4.4, 0.3, awning);
+    b.box(-w, 3.5, 0, w, 4.4, 0.3, l2 ? hex('#d8b45a') : awning); // gilded sign band at Level 2
     // striped awning, sloping down toward the street
     for (let i = 0; i < 8; i++) {
       const x0 = -w + (i * 2 * w) / 8, x1 = -w + ((i + 1) * 2 * w) / 8;
       const c = i % 2 ? awning : P.stucco;
-      b.quad([x0, 2.8, 2.6], [x1, 2.8, 2.6], [x1, 3.5, 0.2], [x0, 3.5, 0.2], c);
-      b.quad([x1, 2.8, 2.6], [x0, 2.8, 2.6], [x0, 3.5, 0.2], [x1, 3.5, 0.2], shade(c, 0.8));
+      const reach = l2 ? 3.8 : 2.6, drop = l2 ? 2.5 : 2.8; // Level 2: deeper awning
+      b.quad([x0, drop, reach], [x1, drop, reach], [x1, 3.5, 0.2], [x0, 3.5, 0.2], c);
+      b.quad([x1, drop, reach], [x0, drop, reach], [x0, 3.5, 0.2], [x1, 3.5, 0.2], shade(c, 0.8));
+      if (l2) b.box(x0, drop - 0.5, reach - 0.1, x1, drop, reach, i % 2 ? P.stucco : awning); // valance
     }
     // upper windows
     for (let i = 0; i < 4; i++) {
       const cx = -w + 2.5 + i * 5;
       b.quad([cx - 0.8, 5.3, 0.1], [cx + 0.8, 5.3, 0.1], [cx + 0.8, 7.6, 0.1], [cx - 0.8, 7.6, 0.1], P.window);
+      if (l2) {
+        b.box(cx - 1, 4.9, 0.1, cx + 1, 5.3, 0.6, P.bench);
+        b.box(cx - 0.95, 5.3, 0.15, cx + 0.95, 5.6, 0.55, i % 2 ? FLOWER_A : FLOWER_C);
+      }
     }
     b.setTransform(null);
     // planters + café tables on the forecourt
@@ -161,6 +189,13 @@ export function buildingMesh(type: BuildingType, variant = 0): MeshBuilder {
       b.blob(x, PLOT_Y + 1.6, 9.75, 1.0, 0.9, P.greens[1]);
     }
     for (const x of [-3, 3]) b.cylinder(x, 9.6, PLOT_Y, PLOT_Y + 1.0, 0.7, 6, P.stucco);
+    if (l2) {
+      // café umbrellas on the forecourt
+      for (const x of [-5.5, 0, 5.5]) {
+        b.cylinder(x, 10.6, PLOT_Y, PLOT_Y + 3.0, 0.12, 4, P.bench, false);
+        b.blob(x, PLOT_Y + 3.1, 10.6, 1.9, 0.45, x === 0 ? P.stucco : awning, 0.26);
+      }
+    }
   } else {
     // Park: lawn, gravel paths, hedges, trees, fountain and benches
     b.flat(-half, -half, half, half, PLOT_Y, P.lawn);
@@ -176,6 +211,17 @@ export function buildingMesh(type: BuildingType, variant = 0): MeshBuilder {
     spots.forEach(([x, z], i) => tree(b, x + (r() - 0.5) * 2, z + (r() - 0.5) * 2, PLOT_Y, 0.8 + r() * 0.25, P.greens[(i + variant) % 4], r() * 3));
     bench(b, -5, 2.6, PLOT_Y, true);
     bench(b, 5, -2.6, PLOT_Y, true);
+    if (l2) {
+      // Level 2: flower beds, extra benches and lamp posts
+      const beds: [number, number, RGB][] = [[-6, -2.6, FLOWER_A], [6, 2.6, FLOWER_B], [-2.6, 6, FLOWER_C], [2.6, -6, FLOWER_A]];
+      for (const [x, z, c] of beds) b.box(x - 1.6, PLOT_Y, z - 0.6, x + 1.6, PLOT_Y + 0.45, z + 0.6, c);
+      bench(b, -2.6, -5, PLOT_Y, false);
+      bench(b, 2.6, 5, PLOT_Y, false);
+      for (const [x, z] of [[-2.2, -2.2], [2.2, 2.2], [-2.2, 2.2], [2.2, -2.2]]) {
+        b.cylinder(x, z, PLOT_Y, PLOT_Y + 3.2, 0.1, 4, hex('#2b2b2e'), false);
+        b.blob(x, PLOT_Y + 3.4, z, 0.35, 0.35, hex('#fff1c2'));
+      }
+    }
   }
   return b;
 }
@@ -201,8 +247,9 @@ function vacantPad(b: MeshBuilder, p: PlotDef): void {
 }
 
 /** Small floating indicator above a building; colour shows happiness / shop activity. */
-function badge(b: MeshBuilder, x: number, z: number, col: RGB): void {
-  b.blob(x, 24, z, 2.0, 2.4, col, 0.3);
+function badge(b: MeshBuilder, x: number, z: number, col: RGB, level: Level): void {
+  b.blob(x, 27, z, 2.0, 2.4, col, 0.3);
+  if (level === 2) b.blob(x, 31.2, z, 1.1, 1.3, hex('#e8b84a'), 0); // gold cap marks Level 2
 }
 
 function happinessColor(h: number): RGB {
@@ -213,11 +260,11 @@ function happinessColor(h: number): RGB {
 }
 
 const buildingCache = new Map<string, MeshBuilder>();
-export function cachedBuilding(type: BuildingType, variant: number): MeshBuilder {
-  const key = `${type}:${variant % 5}`;
+export function cachedBuilding(type: BuildingType, variant: number, level: Level = 1): MeshBuilder {
+  const key = `${type}:${variant % 5}:${level}`;
   let m = buildingCache.get(key);
   if (!m) {
-    m = buildingMesh(type, variant % 5);
+    m = buildingMesh(type, variant % 5, level);
     buildingCache.set(key, m);
   }
   return m;
@@ -229,21 +276,22 @@ export function plotMatrix(p: PlotDef, out = mat4()) {
 }
 
 /** Dynamic layer: vacant pads, placed buildings and status badges. Rebuilt only when the state changes. */
-export function buildPlotsLayer(buildings: Record<string, BuildingType>, stats: Stats): MeshBuilder {
+export function buildPlotsLayer(buildings: Record<string, Building>, stats: Stats): MeshBuilder {
   const b = new MeshBuilder();
   const m = mat4();
   for (const p of PLOTS) {
-    const type = buildings[p.id];
-    if (!type) {
+    const bld = buildings[p.id];
+    if (!bld) {
       vacantPad(b, p);
       continue;
     }
     b.setTransform(compose(m, p.x, 0, p.z, facingAngle(p.facing)));
     b.box(-12, PAVE_Y, -12, 12, PLOT_Y - 0.02, 12, P.pavement);
-    b.append(cachedBuilding(type, p.number));
+    b.append(cachedBuilding(bld.type, p.number, bld.level));
     b.setTransform(null);
-    if (type === 'townhouse') badge(b, p.x, p.z, happinessColor(stats.homeHappiness[p.id] ?? 50));
-    if (type === 'shop') badge(b, p.x, p.z, stats.activeShops[p.id] ? hex('#e8b84a') : hex('#a8a29a'));
+    if (bld.type === 'townhouse') badge(b, p.x, p.z, happinessColor(stats.homeHappiness[p.id] ?? 50), bld.level);
+    else if (bld.type === 'shop') badge(b, p.x, p.z, stats.activeShops[p.id] ? hex('#e8b84a') : hex('#a8a29a'), bld.level);
+    else if (bld.level === 2) badge(b, p.x, p.z, hex('#6fbf73'), 2);
   }
   return b;
 }
@@ -475,7 +523,7 @@ export function buildLabels(): LabelData {
   return { canvas, staticData: new Float32Array(out), plotQuads };
 }
 
-export function vacantPlotLabels(labels: LabelData, buildings: Record<string, BuildingType>): Float32Array {
+export function vacantPlotLabels(labels: LabelData, buildings: Record<string, Building>): Float32Array {
   const out: number[] = [];
   for (const p of PLOTS) if (!buildings[p.id]) out.push(...labels.plotQuads.get(p.id)!);
   return new Float32Array(out);
