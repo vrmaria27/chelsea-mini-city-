@@ -1,0 +1,31 @@
+# Fetches a fresh OpenStreetMap extract and commits it to the branch that triggered the run.
+# Run manually (Actions → Import OSM map data → Run workflow) or by pushing to the osm-import branch.
+# The released game never fetches map data at runtime; it uses the processed, bundled file.
+name: Import OSM map data
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [osm-import]
+    paths: [scripts/osm/fetch.mjs, .github/workflows/import-map.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/osm/fetch.mjs --out data/osm/raw.json
+      - name: Commit extract
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/osm/raw.json
+          git diff --cached --quiet && echo "No change" && exit 0
+          git commit -m "Import OpenStreetMap extract ($(date -u +%Y-%m-%d)) — © OpenStreetMap contributors, ODbL"
+          git push
