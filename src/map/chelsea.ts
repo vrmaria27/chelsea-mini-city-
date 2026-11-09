@@ -1,3 +1,4 @@
+// LEGACY map (Milestones 1–2): kept so old saves can continue on it if migration is declined.
 // Static map definition: a ~400 m × 400 m Chelsea-inspired neighbourhood around
 // King's Road and Duke of York Square. Approximate street layout, hand-authored
 // (no external geographic data). Coordinates are map metres: x = east, z = south,
@@ -24,16 +25,7 @@ export interface Road {
   dashed?: boolean;
 }
 
-export interface PlotDef {
-  id: string;
-  number: number;
-  x: number;
-  z: number;
-  /** Plots are square. */
-  size: number;
-  facing: Facing;
-  area: string;
-}
+import type { PlotDef } from './types';
 
 export interface MapLabel {
   text: string;
@@ -87,8 +79,9 @@ const plot = (number: number, x: number, z: number, facing: Facing, area: string
   number,
   x,
   z,
-  size: PLOT_SIZE,
-  facing,
+  w: PLOT_SIZE,
+  d: PLOT_SIZE,
+  angle: facingAngle(facing),
   area,
 });
 
@@ -137,10 +130,10 @@ export function reservedRects(): Rect[] {
   const pad = 4;
   return [
     ...PLOTS.map((p) => ({
-      x0: p.x - p.size / 2 - pad,
-      z0: p.z - p.size / 2 - pad,
-      x1: p.x + p.size / 2 + pad,
-      z1: p.z + p.size / 2 + pad,
+      x0: p.x - p.w / 2 - pad,
+      z0: p.z - p.d / 2 - pad,
+      x1: p.x + p.w / 2 + pad,
+      z1: p.z + p.d / 2 + pad,
     })),
     DUKE_OF_YORK_SQUARE,
     SLOANE_SQUARE,

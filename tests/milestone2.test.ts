@@ -5,6 +5,7 @@ import { CHAPTER_COUNT, chapterHint } from '../src/sim/chapters';
 import { BUILDINGS, BUILDING_TYPES, RULES, type BuildingType } from '../src/sim/rules';
 import { Simulation, createInitialState, type GameState } from '../src/sim/simulation';
 import { Game } from '../src/game/game';
+import { legacyMap } from '../src/map/legacyMap';
 import type { KeyValueStore } from '../src/sim/save';
 
 const sim = new Simulation(PLOTS);
@@ -206,7 +207,7 @@ test('random action sequences never create money (money + spent = start + income
 
 test('chapter completion happens once and is never revoked', () => {
   const store: KeyValueStore = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
-  const g = new Game(store, () => 0);
+  const g = new Game(legacyMap, store, () => 0);
   const completed: number[] = [];
   g.onChapterComplete = (i) => completed.push(i);
   const plan: [string, BuildingType][] = [

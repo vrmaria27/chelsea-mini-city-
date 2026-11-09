@@ -6,6 +6,9 @@ import { Game, safeLocalStorage, type Tool } from './game/game';
 import { inspectorView } from './game/inspectView';
 import { CityScene, SCALE_MAX, SCALE_MIN, defaultView, type Hit, type PointerVisual } from './game/scene';
 import type { Action } from './game/panel';
+import { legacyMap } from './map/legacyMap';
+import { OSM, osmMap } from './map/osmMap';
+import type { GameMap } from './map/types';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = $<HTMLCanvasElement>('scene');
@@ -17,16 +20,31 @@ function fatal(msg: string): never {
   throw new Error(msg);
 }
 
+// Map selection: the real (OpenStreetMap) map by default; the legacy map only if the player chose it.
+const MAP_PREF_KEY = 'chelsea-mini-city.map';
+const urlMap = new URLSearchParams(location.search).get('map');
+let storedMap: string | null = null;
+try {
+  storedMap = localStorage.getItem(MAP_PREF_KEY);
+} catch { /* ignore */ }
+const gameMap: GameMap = (urlMap ?? storedMap) === 'legacy' ? legacyMap : osmMap;
+function chooseMap(id: 'legacy' | 'chelsea-osm'): void {
+  try {
+    localStorage.setItem(MAP_PREF_KEY, id);
+  } catch { /* ignore */ }
+  location.search = '';
+}
+
 let scene: CityScene;
 try {
-  scene = new CityScene(canvas);
+  scene = new CityScene(canvas, gameMap);
 } catch (e) {
   fatal(`This browser couldn't start WebGL2 (${(e as Error).message}). Try an up-to-date Chrome, Edge, Firefox, Safari or the Meta Quest Browser.`);
 }
 const gl = scene.r.gl;
 const store = safeLocalStorage();
 const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-const game = new Game(store, () => performance.now(), prefersReducedMotion);
+const game = new Game(gameMap, store, () => performance.now(), prefersReducedMotion);
 const ROT_STEP = Math.PI / 12; // 15°
 
 // ---------------------------------------------------------------------------------------------
@@ -34,10 +52,39 @@ const ROT_STEP = Math.PI / 12; // 15°
 
 let xrSession: XRSession | null = null;
 let recenterPending = false;
+let desktopMapView = false;
+let camBeforeMap: typeof cam | null = null;
+
+function toggleMapView(): void {
+  const v = scene.view;
+  if (xrSession) {
+    v.mode = v.mode === 'map' ? 'table' : 'map';
+    game.say(v.mode === 'map' ? 'Map view: north is away from you. Press "Tabletop view" to return.' : 'Tabletop view.');
+  } else if (!desktopMapView) {
+    camBeforeMap = { ...cam };
+    desktopMapView = true;
+    // Straight down with north at the top of the screen (camera yaw follows the model's rotation).
+    Object.assign(cam, { yaw: v.modelYaw, pitch: 1.5, dist: scene.worldHalf * v.modelScale * 3.1, tx: v.anchor.x, ty: v.anchor.y, tz: v.anchor.z });
+    game.say('Map view: north up. Press "Tabletop view" (or M) to return.');
+  } else {
+    desktopMapView = false;
+    if (camBeforeMap) Object.assign(cam, camBeforeMap);
+    game.say('Tabletop view.');
+  }
+  syncMapViewButtons();
+}
+
+function syncMapViewButtons(): void {
+  const on = xrSession ? scene.view.mode === 'map' : desktopMapView;
+  document.querySelectorAll<HTMLButtonElement>('[data-action="mapView"]').forEach((b) => {
+    b.textContent = on ? 'Tabletop view' : 'Map view (north up)';
+    b.setAttribute('aria-pressed', String(on));
+  });
+}
 
 let lastPanelActionAt = 0;
 
-function doAction(a: Action | 'help'): void {
+function doAction(a: Action | 'help' | 'about'): void {
   const v = scene.view;
   if (a.startsWith('tool:')) {
     game.select(a.slice(5) as Tool);
@@ -92,6 +139,12 @@ function doAction(a: Action | 'help'): void {
       break;
     case 'help':
       showOnboarding(true);
+      break;
+    case 'about':
+      showAbout();
+      break;
+    case 'mapView':
+      toggleMapView();
       break;
   }
   scene.updateMatrices();
@@ -201,7 +254,46 @@ $('obClose').addEventListener('click', () => {
     localStorage.setItem(OB_KEY, '1');
   } catch { /* ignore */ }
 });
-showOnboarding();
+if (!game.pendingChoice) showOnboarding();
+
+// ---- About panel & attribution ---------------------------------------------------------------
+function showAbout(): void {
+  const m = gameMap;
+  const meta = OSM.meta;
+  const isOsm = m.id === 'chelsea-osm';
+  $('aboutBody').innerHTML = isOsm
+    ? `<p><b>${esc(m.title)}</b>. Map centre ${meta.centre.lat}, ${meta.centre.lon}; area ${meta.half * 2} m × ${meta.half * 2} m
+       (lat ${meta.bbox.south}–${meta.bbox.north}, lon ${meta.bbox.west}–${meta.bbox.east}).</p>
+       <p>Map data <a href="${esc(meta.copyrightUrl)}" target="_blank" rel="noopener">© OpenStreetMap contributors</a>,
+       available under the Open Database License (ODbL 1.0). Extract retrieved ${esc(meta.retrieved.slice(0, 10))} (OSM data as of ${esc(String(meta.osmBase).slice(0, 10))}).</p>
+       <p><b>Sourced from OSM:</b> street centrelines, names and junctions; pedestrian areas and squares; parks and gardens; building footprints and most building heights (from storey counts); landmark positions.</p>
+       <p><b>Estimated or stylised:</b> road widths (except where tagged), heights of buildings without height/storey tags, façade colours, flat roofs, trees in green spaces, people and traffic.</p>
+       <p><b>Fictional:</b> the 20 numbered development plots are imaginary redevelopment opportunities for the game. They are not claims that any real property is vacant or available; real buildings under them are hidden on the model.</p>
+       <p class="sub">Playing an older save? <button data-action-map="legacy">Switch to the legacy map</button></p>`
+    : `<p><b>${esc(m.title)}</b></p><p>${esc(m.notes)}</p>
+       <p><button data-action-map="chelsea-osm">Switch to the real Chelsea map</button> (your city moves to matching plots; a backup is kept).</p>`;
+  $('about').hidden = false;
+}
+$('aboutClose').addEventListener('click', () => ($('about').hidden = true));
+document.addEventListener('click', (e) => {
+  const b = (e.target as HTMLElement).closest<HTMLElement>('[data-action-map]');
+  if (b) chooseMap(b.dataset.actionMap as 'legacy' | 'chelsea-osm');
+});
+const attr = $('attribution');
+if (gameMap.attribution) attr.innerHTML = `Map data <a href="${gameMap.attribution.url}" target="_blank" rel="noopener">${esc(gameMap.attribution.text)}</a> · <button data-action="about" class="link">About</button>`;
+else attr.innerHTML = `Legacy approximate map · <button data-action="about" class="link">About</button>`;
+
+// ---- Migration choice -----------------------------------------------------------------------
+if (game.pendingChoice) {
+  $('choiceBody').textContent = `${game.pendingChoice.notice} Your original save has been kept safely. How would you like to continue?`;
+  $('choice').hidden = false;
+}
+$('choiceLegacy').addEventListener('click', () => chooseMap('legacy'));
+$('choiceNew').addEventListener('click', () => {
+  $('choice').hidden = true;
+  game.startNewMapFromChoice();
+  showOnboarding();
+});
 
 // ---------------------------------------------------------------------------------------------
 // Desktop camera: orbit (drag), zoom (wheel / pinch), pan (right-drag or shift-drag), click to build
@@ -209,7 +301,10 @@ showOnboarding();
 const cam = { yaw: 0, pitch: 0.9, dist: 1.4, tx: 0, ty: 0.83, tz: 0.04 };
 function resetCamera(): void {
   const d = defaultView();
-  Object.assign(cam, { yaw: 0, pitch: 0.9, dist: window.innerWidth < 760 ? 1.8 : 1.4, tx: 0, ty: d.anchor.y + 0.03, tz: 0.04 });
+  const fit = scene.worldHalf * (window.innerWidth < 760 ? 3.5 : 2.7);
+  Object.assign(cam, { yaw: 0, pitch: 0.9, dist: fit, tx: 0, ty: d.anchor.y + 0.03, tz: 0.04 });
+  desktopMapView = false;
+  syncMapViewButtons();
 }
 resetCamera();
 
@@ -331,11 +426,20 @@ window.addEventListener('keydown', (e) => {
   else if (k === '-' || k === '_') doAction('scaleDown');
   else if (k === '+' || k === '=') doAction('scaleUp');
   else if (k === 'r') doAction('resetView');
+  else if (k === 'm') doAction('mapView');
   else if (k === 'escape') {
     if (!$('onboarding').hidden) $('onboarding').hidden = true;
     else doAction('closeInspect');
   }
 });
+
+/** Minor street names appear only when the model is close enough to read them. */
+function updateLabelVisibility(e: Vec3): void {
+  const m = scene.modelM;
+  const d = Math.hypot(e[0] - m[12], e[1] - m[13], e[2] - m[14]);
+  const mapView = xrSession ? scene.view.mode === 'map' : desktopMapView;
+  scene.showMinorLabels = mapView || d / (scene.worldHalf * 2 * scene.view.modelScale) < 1.45;
+}
 
 function clamp(v: number, a: number, b: number): number {
   return Math.min(b, Math.max(a, v));
@@ -386,6 +490,7 @@ function desktopFrame(time: number): void {
   scene.sync(game);
   scene.tick(dt);
   updateDesktopCamera();
+  updateLabelVisibility(eye);
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.viewport(0, 0, canvas.width, canvas.height);
   gl.clearColor(0.913, 0.89, 0.847, 1);
@@ -467,7 +572,8 @@ function onXREnd(): void {
   ctrls.clear();
   primary = null;
   scene.showPanel = false;
-  Object.assign(scene.view, savedView, { anchor: { ...savedView.anchor } });
+  Object.assign(scene.view, savedView, { anchor: { ...savedView.anchor }, mode: 'table' });
+  syncMapViewButtons();
   scene.updateMatrices();
   game.setHover(null);
   vrBox.hidden = false;
@@ -498,8 +604,9 @@ function recenter(pose: XRViewerPose): void {
   fx /= l;
   fz /= l;
   const a = scene.view.anchor;
-  a.x = p.x + fx * 0.62;
-  a.z = p.z + fz * 0.62;
+  const reach = 0.2 + scene.worldHalf * 1.05; // table centre distance: the near edge sits just in front of you
+  a.x = p.x + fx * reach;
+  a.z = p.z + fz * reach;
   a.y = floorSpace ? clamp(p.y - 0.62, 0.45, 1.15) : p.y - 0.62;
   a.yaw = Math.atan2(-fx, -fz);
   scene.updateMatrices();
@@ -563,6 +670,7 @@ function xrFrame(time: number, frame: XRFrame): void {
     multiply(xrViewProj, v.projectionMatrix, v.transform.inverse.matrix);
     const p = v.transform.position;
     xrEye[0] = p.x; xrEye[1] = p.y; xrEye[2] = p.z;
+    if (v === pose.views[0]) updateLabelVisibility(xrEye);
     scene.render(game, xrViewProj, xrEye, visuals, game.clock.progress, v === pose.views[0] ? dt : 0);
   }
 }

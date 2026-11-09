@@ -1,9 +1,10 @@
 // Game controller: wraps the pure simulation with tool selection, inspection, feedback
 // messages, persistence and change notifications. Shared by desktop and VR input.
-import { PLOTS, type PlotDef } from '../map/chelsea';
+import { PLOTS as LEGACY_PLOTS } from '../map/chelsea';
+import type { GameMap, PlotDef } from '../map/types';
 import { CHAPTERS, CHAPTER_COUNT, chapterGoals, chapterHint, type Goal } from '../sim/chapters';
 import { BUILDINGS, type BuildingType } from '../sim/rules';
-import { clearSave, defaultPreferences, loadGame, saveGame, type KeyValueStore, type Preferences } from '../sim/save';
+import { BACKUP_KEY, clearSave, defaultPreferences, loadGame, saveGame, type KeyValueStore, type MapContext, type Preferences } from '../sim/save';
 import {
   Simulation, TickClock, createInitialState, formatMoney,
   type Estimate, type GameState, type Inspection, type Stats,
@@ -34,7 +35,7 @@ const RESET_CONFIRM_MS = 5000;
 const plus = (n: number) => (n >= 0 ? '+' : '−') + Math.abs(Math.round(n));
 
 export class Game {
-  readonly sim = new Simulation(PLOTS);
+  readonly sim: Simulation;
   readonly clock = new TickClock();
   state: GameState;
   stats: Stats;
@@ -51,18 +52,32 @@ export class Game {
   private listeners: Array<(g: Game) => void> = [];
   onChapterComplete: ((index: number) => void) | null = null;
   onBuildEffect: ((kind: 'place' | 'upgrade', plotId: string) => void) | null = null;
-  readonly plotById = new Map(PLOTS.map((p) => [p.id, p]));
+  readonly plotById: Map<string, PlotDef>;
+  /** Set when a saved city could not be moved onto this map automatically; nothing is saved until resolved. */
+  pendingChoice: { notice: string; unmapped: string[] } | null = null;
+  readonly mapInfo: { id: string; version: number };
   private previewCache: { key: string; value: Preview | null } = { key: '', value: null };
 
-  constructor(private store: KeyValueStore | null, private now: () => number = () => performance.now(), prefersReducedMotion = false) {
-    const loaded = loadGame(store, this.sim);
+  constructor(readonly map: GameMap, private store: KeyValueStore | null, private now: () => number = () => performance.now(), prefersReducedMotion = false) {
+    this.sim = new Simulation(map.plots);
+    this.plotById = new Map(map.plots.map((p) => [p.id, p]));
+    this.mapInfo = { id: map.id, version: map.version };
+    const ctx: MapContext = {
+      id: map.id,
+      version: map.version,
+      sim: this.sim,
+      legacyPlotMap: map.legacyPlotMap,
+      legacySim: map.legacyPlotMap ? new Simulation(LEGACY_PLOTS) : undefined,
+    };
+    const loaded = loadGame(store, ctx);
+    if (loaded.status === 'needs-choice') this.pendingChoice = { notice: loaded.notice, unmapped: loaded.unmapped };
     this.state = loaded.state;
     this.prefs = loaded.prefs ?? { ...defaultPreferences(), reducedMotion: prefersReducedMotion };
     this.stats = this.sim.stats(this.state);
     const welcome = loaded.status === 'loaded' ? 'Welcome back! Your Chelsea has been restored.' : 'Choose a building, then point at an empty plot.';
     const notice = 'notice' in loaded && loaded.notice ? loaded.notice : null;
     this.message = { text: notice ?? welcome, kind: loaded.status === 'reset' ? 'error' : 'info', at: this.now() };
-    if (loaded.status === 'loaded' && loaded.migratedFrom) this.persist(); // write v2 straight away
+    if (loaded.status === 'loaded' && loaded.migratedFrom) this.persist(); // write the current format straight away
   }
 
   // ---- plumbing -------------------------------------------------------------------------------
@@ -84,7 +99,16 @@ export class Game {
   }
 
   private persist(): void {
-    saveGame(this.store, this.state, this.prefs);
+    if (this.pendingChoice) return; // never overwrite a save the player hasn't decided about
+    saveGame(this.store, this.state, this.prefs, this.mapInfo);
+  }
+
+  /** Player chose to start fresh on this map; the original save stays in the backup slot. */
+  startNewMapFromChoice(): void {
+    this.pendingChoice = null;
+    this.say(`Started a new city on the real map. Your previous save is kept as a backup (${BACKUP_KEY}).`);
+    this.persist();
+    this.changed(true);
   }
 
   /** Applies a new state, persisting it and announcing newly completed chapters (once each). */

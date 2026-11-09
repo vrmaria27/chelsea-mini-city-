@@ -5,8 +5,11 @@ import {
   BACKUP_KEY, SAVE_KEY, SAVE_VERSION, clearSave, deserialize, loadGame, saveGame, serialize, type KeyValueStore,
 } from '../src/sim/save';
 import { Simulation, createInitialState, type GameState } from '../src/sim/simulation';
+import type { MapContext } from '../src/sim/save';
 
+// These tests exercise the save format on the legacy map (plot ids p1–p20).
 const sim = new Simulation(PLOTS);
+const legacyCtx: MapContext = { id: 'legacy', version: 1, sim };
 
 class MemoryStore implements KeyValueStore {
   map = new Map<string, string>();
@@ -27,18 +30,18 @@ test('round-trips state (with upgrades, chapter and preferences) through the v2 
   s = ok(sim.upgrade(s, 'p3'));
   s = sim.tick(s);
   const store = new MemoryStore();
-  assert.equal(saveGame(store, s, { reducedMotion: true, lowDetail: false }), true);
+  assert.equal(saveGame(store, s, { reducedMotion: true, lowDetail: false }, { id: 'legacy', version: 1 }), true);
   const raw = JSON.parse(store.getItem(SAVE_KEY)!);
   assert.equal(raw.version, SAVE_VERSION);
-  assert.equal(SAVE_VERSION, 2);
-  const loaded = loadGame(store, sim);
+  assert.equal(SAVE_VERSION, 3);
+  const loaded = loadGame(store, legacyCtx);
   assert.equal(loaded.status, 'loaded');
   assert.deepEqual(loaded.state, s);
   assert.deepEqual(loaded.prefs, { reducedMotion: true, lowDetail: false });
   assert.equal(loaded.state.lastAction?.kind, 'upgrade');
 });
 
-test('migrates a Milestone 1 (v1) save: buildings become Level 1, money and progress kept', () => {
+test('reads a Milestone 1 (v1) save on the legacy map: buildings become Level 1, money and progress kept', () => {
   const v1 = {
     version: 1,
     savedAt: '2026-11-09T14:00:00.000Z',
@@ -52,7 +55,7 @@ test('migrates a Milestone 1 (v1) save: buildings become Level 1, money and prog
   };
   const store = new MemoryStore();
   store.setItem(SAVE_KEY, JSON.stringify(v1));
-  const r = loadGame(store, sim);
+  const r = loadGame(store, legacyCtx);
   assert.equal(r.status, 'loaded');
   assert.ok(r.status === 'loaded' && r.migratedFrom === 1);
   assert.equal(r.state.money, 3450);
@@ -69,12 +72,12 @@ test('migrates a Milestone 1 (v1) save: buildings become Level 1, money and prog
 
 test('v1 migration derives chapter completion from state even if the flag was missing', () => {
   const v1 = { version: 1, state: { money: 0, buildings: { p11: 'park', p8: 'park', p14: 'shop', p7: 'townhouse', p9: 'townhouse', p10: 'townhouse', p12: 'townhouse', p13: 'townhouse' }, objectiveReached: false, ticks: 0 } };
-  const r = deserialize(JSON.stringify(v1), sim);
+  const r = deserialize(JSON.stringify(v1), legacyCtx);
   assert.equal(r.state.chapter, 1);
 });
 
 test('no save starts a new game', () => {
-  const r = loadGame(new MemoryStore(), sim);
+  const r = loadGame(new MemoryStore(), legacyCtx);
   assert.equal(r.status, 'none');
   assert.deepEqual(r.state, createInitialState());
 });
@@ -83,7 +86,7 @@ test('malformed or unsupported saves start fresh but keep a backup copy', () => 
   for (const raw of ['{not json', JSON.stringify({ version: 99, state: {} }), JSON.stringify({ hello: 1 })]) {
     const store = new MemoryStore();
     store.setItem(SAVE_KEY, raw);
-    const r = loadGame(store, sim);
+    const r = loadGame(store, legacyCtx);
     assert.equal(r.status, 'reset');
     assert.deepEqual(r.state, createInitialState());
     assert.equal(store.getItem(BACKUP_KEY), raw, 'unreadable data is backed up, not destroyed');
@@ -92,8 +95,8 @@ test('malformed or unsupported saves start fresh but keep a backup copy', () => 
 });
 
 test('damaged fields are rejected or repaired without losing valid buildings', () => {
-  assert.equal(deserialize(JSON.stringify({ version: 2, state: { money: 'lots', buildings: {} } }), sim).status, 'reset');
-  assert.equal(deserialize(JSON.stringify({ version: 2, state: { money: -5, buildings: {} } }), sim).status, 'reset');
+  assert.equal(deserialize(JSON.stringify({ version: 2, state: { money: 'lots', buildings: {} } }), legacyCtx).status, 'reset');
+  assert.equal(deserialize(JSON.stringify({ version: 2, state: { money: -5, buildings: {} } }), legacyCtx).status, 'reset');
   const r = deserialize(
     JSON.stringify({
       version: 2,
@@ -106,7 +109,7 @@ test('damaged fields are rejected or repaired without losing valid buildings', (
       },
       prefs: 'bad',
     }),
-    sim,
+    legacyCtx,
   );
   assert.equal(r.status, 'loaded');
   assert.deepEqual(r.state.buildings, { p1: { type: 'townhouse', level: 2 }, p2: { type: 'park', level: 1 } });
@@ -118,7 +121,7 @@ test('damaged fields are rejected or repaired without losing valid buildings', (
 });
 
 test('stale undo history that no longer matches the buildings is dropped', () => {
-  const r = deserialize(JSON.stringify({ version: 2, state: { money: 0, buildings: { p1: { type: 'townhouse', level: 1 } }, lastAction: { kind: 'upgrade', plotId: 'p1', type: 'townhouse', cost: 1500 }, chapter: 0, ticks: 0 } }), sim);
+  const r = deserialize(JSON.stringify({ version: 2, state: { money: 0, buildings: { p1: { type: 'townhouse', level: 1 } }, lastAction: { kind: 'upgrade', plotId: 'p1', type: 'townhouse', cost: 1500 }, chapter: 0, ticks: 0 } }), legacyCtx);
   assert.equal(r.state.lastAction, null, 'cannot refund an upgrade that is not present');
 });
 
@@ -129,7 +132,7 @@ test('storage failures do not crash', () => {
     removeItem() { throw new Error('denied'); },
   };
   assert.equal(saveGame(broken, createInitialState()), false);
-  assert.equal(loadGame(broken, sim).status, 'none');
+  assert.equal(loadGame(broken, legacyCtx).status, 'none');
   assert.doesNotThrow(() => clearSave(broken));
   assert.equal(saveGame(null, createInitialState()), false);
 });
@@ -139,5 +142,5 @@ test('reset clears the save', () => {
   saveGame(store, createInitialState());
   clearSave(store);
   assert.equal(store.getItem(SAVE_KEY), null);
-  assert.ok(serialize(createInitialState()).includes('"version":2'));
+  assert.ok(serialize(createInitialState()).includes('"version":3'));
 });

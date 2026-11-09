@@ -9,7 +9,7 @@ import { inspectorView } from './inspectView';
 export type Action =
   | `tool:${Tool}`
   | 'undo' | 'rotL' | 'rotR' | 'scaleDown' | 'scaleUp' | 'lower' | 'raise' | 'resetView' | 'resetSave' | 'exitVR'
-  | 'upgrade' | 'closeInspect' | 'toggleMotion' | 'toggleDetail';
+  | 'upgrade' | 'closeInspect' | 'toggleMotion' | 'toggleDetail' | 'mapView' | 'about';
 
 interface Button {
   id: Action;
@@ -109,13 +109,17 @@ export class WorldPanel extends CanvasPanel {
     super({ w: 1024, h: 1040 }, 0.54);
   }
 
+  /** Set by the scene: whether the model is in north-up map view. */
+  mapMode = false;
+
   draw(game: Game, tickProgress: number): void {
     const c = this.ctx;
     const W = this.px.w;
+    const mapMode = this.mapMode;
     this.frame();
 
     this.label('Chelsea Mini City', 36, 50, 40, COL.ink, 'left');
-    this.label('Chelsea-inspired; approximate layout', W - 36, 52, 21, COL.soft, 'right', 500);
+    this.label(game.map.attribution ? 'Map data © OpenStreetMap contributors' : 'Chelsea-inspired; approximate layout', W - 36, 52, 21, COL.soft, 'right', 500);
 
     // Stats
     const s = game.stats;
@@ -203,6 +207,7 @@ export class WorldPanel extends CanvasPanel {
     ]);
     row(736, 70, [
       ['resetView', 'Reset view'],
+      ['mapView', mapMode ? 'Tabletop view' : 'Map view', mapMode],
       ['resetSave', game.resetArmed ? 'Confirm reset' : 'Reset save'],
       ['exitVR', 'Exit VR'],
     ]);

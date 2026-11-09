@@ -1,16 +1,14 @@
-// Decorative neighbourhood life: a capped number of stylised pedestrians on predefined
-// pavement loops and a few vehicles on fixed road lanes. Purely visual: no pathfinding,
-// collisions or traffic rules. Two instanced draw calls (people, vehicles).
-import { BLOCKS, PLOTS, type Rect } from '../map/chelsea';
+// Decorative neighbourhood life: a capped number of stylised pedestrians walking predefined
+// footpaths (on the real map: OpenStreetMap footways/sidewalks) and a few vehicles driving real
+// carriageways. Purely visual: no pathfinding, collisions or traffic rules. Instanced draw calls.
+import type { GameMap, LifePath } from '../map/types';
 import type { GameState } from '../sim/simulation';
 import { MeshBuilder, hex, rng } from '../engine/geometry';
 import type { InstancedMesh, Renderer } from '../engine/renderer';
 import type { Mat4 } from '../engine/math';
-import { PAVE_Y } from './cityModel';
 
 const MAX_PEOPLE = 24;
 const PEOPLE_SCALE = 2.2; // stylised: real-size people would be ~4 mm tall on the table
-const INSET = 2.4; // pavement path distance from the kerb (houses start 3.5 m in)
 
 const WHITE = hex('#ffffff'); // instance-coloured parts
 
@@ -46,42 +44,47 @@ function busMesh(): Float32Array {
   return b.toFloat32();
 }
 
-interface Loop {
-  rect: Rect;
-  perimeter: number;
-  weight: number;
+/** A polyline with cumulative lengths for constant-speed travel. */
+class Track {
+  readonly cum: number[] = [0];
+  readonly length: number;
+  constructor(readonly path: LifePath) {
+    const p = path.pts;
+    for (let i = 0; i + 3 < p.length; i += 2) this.cum.push(this.cum[this.cum.length - 1] + Math.hypot(p[i + 2] - p[i], p[i + 3] - p[i + 1]));
+    this.length = this.cum[this.cum.length - 1];
+  }
+  /** Position and heading at distance d (clamped), with a sideways offset (left of travel when positive). */
+  at(d: number, offset: number, out: [number, number, number]): void {
+    const p = this.path.pts;
+    d = Math.max(0, Math.min(this.length, d));
+    let i = 1;
+    while (i < this.cum.length - 1 && this.cum[i] < d) i++;
+    const seg = this.cum[i] - this.cum[i - 1] || 1;
+    const t = (d - this.cum[i - 1]) / seg;
+    const ax = p[(i - 1) * 2], az = p[(i - 1) * 2 + 1], bx = p[i * 2], bz = p[i * 2 + 1];
+    const dx = (bx - ax) / seg, dz = (bz - az) / seg;
+    out[0] = ax + (bx - ax) * t + dz * offset;
+    out[1] = az + (bz - az) * t - dx * offset;
+    out[2] = Math.atan2(-dz, dx); // yaw that turns local +x along the direction of travel
+  }
+  midpoint(): [number, number] {
+    const o: [number, number, number] = [0, 0, 0];
+    this.at(this.length / 2, 0, o);
+    return [o[0], o[1]];
+  }
 }
 
-interface Walker {
-  loop: number;
-  t: number;
-  speed: number;
+interface Mover {
+  track: Track;
+  d: number;
+  speed: number; // signed: negative travels the path backwards
   color: [number, number, number];
-}
-
-interface Vehicle {
-  kind: 'car' | 'bus';
-  axis: 'x' | 'z';
-  fixed: number; // lane coordinate
-  from: number;
-  to: number;
-  pos: number;
-  speed: number;
-  color: [number, number, number];
+  kind: 'person' | 'car' | 'bus';
+  lane: number;
 }
 
 const COATS = ['#2f5a45', '#9c3d3d', '#2f4f7a', '#c08a2e', '#6b4f7a', '#e9e2d5', '#4a4a50', '#b86a4b'].map(hex);
 const PAINTS = ['#2f4f7a', '#e9e2d5', '#1f1f22', '#7a8c6b', '#9c3d3d', '#c9c3b8'].map(hex);
-
-/** Point at distance d around a rectangle's perimeter (clockwise from the north-west corner) and heading. */
-function onLoop(r: Rect, d: number, out: [number, number, number]): void {
-  const w = r.x1 - r.x0, h = r.z1 - r.z0;
-  const p = ((d % (2 * (w + h))) + 2 * (w + h)) % (2 * (w + h));
-  if (p < w) { out[0] = r.x0 + p; out[1] = r.z0; out[2] = Math.PI / 2; }
-  else if (p < w + h) { out[0] = r.x1; out[1] = r.z0 + (p - w); out[2] = 0; }
-  else if (p < 2 * w + h) { out[0] = r.x1 - (p - w - h); out[1] = r.z1; out[2] = -Math.PI / 2; }
-  else { out[0] = r.x0; out[1] = r.z1 - (p - 2 * w - h); out[2] = Math.PI; }
-}
 
 /** Writes one instance row without allocating. */
 function write(d: Float32Array, i: number, x: number, y: number, z: number, yaw: number, c: [number, number, number]): void {
@@ -93,9 +96,9 @@ export class NeighbourhoodLife {
   private people: InstancedMesh;
   private cars: InstancedMesh;
   private buses: InstancedMesh;
-  private loops: Loop[];
-  private walkers: Walker[] = [];
-  private vehicles: Vehicle[];
+  private walkTracks: Track[];
+  private walkers: Mover[] = [];
+  private vehicles: Mover[] = [];
   private pData = new Float32Array(MAX_PEOPLE * 7);
   private cData = new Float32Array(8 * 7);
   private bData = new Float32Array(2 * 7);
@@ -103,59 +106,44 @@ export class NeighbourhoodLife {
   private time = 0;
   private stateKey = '';
 
-  constructor(private r: Renderer) {
+  constructor(private r: Renderer, private map: GameMap) {
     this.people = r.instancedMesh(personMesh(), MAX_PEOPLE);
     this.cars = r.instancedMesh(carMesh(), 8);
     this.buses = r.instancedMesh(busMesh(), 2);
-    this.loops = BLOCKS.map((b) => {
-      const rect = { x0: b.x0 + INSET, z0: b.z0 + INSET, x1: b.x1 - INSET, z1: b.z1 - INSET };
-      return { rect, perimeter: 2 * (rect.x1 - rect.x0 + rect.z1 - rect.z0), weight: 0 };
+    this.walkTracks = map.walkPaths.map((p) => new Track(p)).filter((t) => t.length > 20);
+    // Vehicles on the longest drive paths; UK traffic keeps left.
+    const drive = map.drivePaths.map((p) => new Track(p)).filter((t) => t.length > 60).sort((a, b) => b.length - a.length);
+    const rand = rng(7);
+    const kinds: Mover['kind'][] = ['bus', 'car', 'car', 'car', 'car', 'car'];
+    kinds.forEach((kind, i) => {
+      const track = drive[i % Math.max(1, drive.length)];
+      if (!track) return;
+      const dir = i % 2 ? -1 : 1;
+      this.vehicles.push({ track, d: rand() * track.length, speed: dir * (kind === 'bus' ? 6 : 7 + rand() * 2), color: kind === 'bus' ? hex('#c8322b') : PAINTS[i % PAINTS.length], kind, lane: 2.2 });
     });
-    // Lanes: UK traffic keeps left. King's Road runs east-west at z = -20.
-    this.vehicles = [
-      { kind: 'bus', axis: 'x', fixed: -24, from: -200, to: 200, pos: -120, speed: 6.5, color: hex('#c8322b') },
-      { kind: 'car', axis: 'x', fixed: -24, from: -200, to: 200, pos: 60, speed: 8, color: PAINTS[0] },
-      { kind: 'car', axis: 'x', fixed: -16, from: 200, to: -200, pos: 20, speed: 8.5, color: PAINTS[1] },
-      { kind: 'car', axis: 'x', fixed: -16, from: 200, to: -200, pos: -140, speed: 7.5, color: PAINTS[2] },
-      { kind: 'car', axis: 'z', fixed: 173, from: -11, to: 200, pos: 80, speed: 7, color: PAINTS[3] },
-      { kind: 'car', axis: 'z', fixed: 27.5, from: 200, to: -11, pos: 120, speed: 6.5, color: PAINTS[4] },
-    ];
   }
 
   /** Re-plan pedestrians when the neighbourhood changes: more residents, more people, near homes and shops. */
   sync(state: GameState, residents: number): void {
     const key = `${residents}|${Object.keys(state.buildings).length}`;
-    if (key === this.stateKey) return;
+    if (key === this.stateKey || !this.walkTracks.length) return;
     this.stateKey = key;
-    for (const l of this.loops) l.weight = 0;
-    for (const p of PLOTS) {
-      const b = state.buildings[p.id];
-      if (!b || b.type === 'park') continue;
-      const li = BLOCKS.findIndex((bl) => p.x > bl.x0 && p.x < bl.x1 && p.z > bl.z0 && p.z < bl.z1);
-      if (li >= 0) this.loops[li].weight += b.type === 'shop' ? 2 : b.level;
-    }
-    // King's Road frontages and the squares always have a little life.
-    for (const i of [2, 3, 6]) this.loops[i].weight += 1;
+    const built = this.map.plots.filter((p) => state.buildings[p.id] && state.buildings[p.id].type !== 'park');
+    // Weight each footpath by nearby homes and shops (plus a little everywhere along main routes).
+    const weights = this.walkTracks.map((t) => {
+      const [mx, mz] = t.midpoint();
+      return 0.15 + built.filter((p) => Math.hypot(p.x - mx, p.z - mz) < 120).length;
+    });
+    const sum = weights.reduce((a, b) => a + b, 0);
     const total = Math.min(MAX_PEOPLE, 4 + Math.floor(residents / 6));
-    const sum = this.loops.reduce((n, l) => n + l.weight, 0);
     const rand = rng(residents * 7 + 3);
     this.walkers = [];
-    // Largest-remainder allocation so exactly `total` people are placed.
-    const shares = this.loops.map((l, li) => ({ li, exact: (l.weight / sum) * total }));
-    const counts = shares.map((x) => Math.floor(x.exact));
-    let left = total - counts.reduce((n, c) => n + c, 0);
-    for (const x of [...shares].sort((a, b) => (b.exact % 1) - (a.exact % 1))) if (left-- > 0) counts[x.li]++;
-    this.loops.forEach((l, li) => {
-      const n = counts[li];
-      for (let k = 0; k < n; k++) {
-        this.walkers.push({
-          loop: li,
-          t: rand() * l.perimeter,
-          speed: (1.1 + rand() * 0.6) * (rand() < 0.5 ? -1 : 1),
-          color: COATS[Math.floor(rand() * COATS.length)],
-        });
-      }
-    });
+    for (let k = 0; k < total; k++) {
+      let x = rand() * sum, i = 0;
+      while (i < weights.length - 1 && (x -= weights[i]) > 0) i++;
+      const track = this.walkTracks[i];
+      this.walkers.push({ track, d: rand() * track.length, speed: (1.1 + rand() * 0.6) * (rand() < 0.5 ? -1 : 1), color: COATS[Math.floor(rand() * COATS.length)], kind: 'person', lane: (rand() - 0.5) * 0.8 });
+    }
   }
 
   update(dt: number, moving: boolean): void {
@@ -163,20 +151,22 @@ export class NeighbourhoodLife {
     const step = moving ? dt : 0;
     const o = this.tmp;
     this.walkers.forEach((w, i) => {
-      w.t += w.speed * step;
-      onLoop(this.loops[w.loop].rect, w.t, o);
+      w.d += w.speed * step;
+      if (w.d > w.track.length || w.d < 0) { w.speed = -w.speed; w.d = Math.max(0, Math.min(w.track.length, w.d)); } // turn around at path ends
+      w.track.at(w.d, w.lane, o);
       const bob = moving ? Math.abs(Math.sin(this.time * 7 + i)) * 0.25 : 0;
-      write(this.pData, i, o[0], PAVE_Y + bob, o[1], o[2] + (w.speed < 0 ? Math.PI : 0), w.color);
+      write(this.pData, i, o[0], w.track.path.y + bob, o[1], o[2] + (w.speed < 0 ? Math.PI : 0), w.color);
     });
     let ci = 0, bi = 0;
     for (const v of this.vehicles) {
-      const dir = Math.sign(v.to - v.from);
-      v.pos += dir * v.speed * step;
-      if ((dir > 0 && v.pos > v.to) || (dir < 0 && v.pos < v.to)) v.pos = v.from;
-      const x = v.axis === 'x' ? v.pos : v.fixed, z = v.axis === 'x' ? v.fixed : v.pos;
-      const yaw = v.axis === 'x' ? (dir > 0 ? 0 : Math.PI) : dir > 0 ? -Math.PI / 2 : Math.PI / 2;
-      if (v.kind === 'bus') write(this.bData, bi++, x, 0, z, yaw, v.color);
-      else write(this.cData, ci++, x, 0, z, yaw, v.color);
+      v.d += v.speed * step;
+      if (v.d > v.track.length) v.d -= v.track.length; // reappear at the start (map edge)
+      if (v.d < 0) v.d += v.track.length;
+      const fwd = v.speed >= 0;
+      v.track.at(v.d, fwd ? v.lane : -v.lane, o);
+      const yaw = o[2] + (fwd ? 0 : Math.PI);
+      if (v.kind === 'bus') write(this.bData, bi++, o[0], v.track.path.y, o[1], yaw, v.color);
+      else write(this.cData, ci++, o[0], v.track.path.y, o[1], yaw, v.color);
     }
     this.r.updateInstances(this.people, this.pData, this.walkers.length);
     this.r.updateInstances(this.cars, this.cData, ci);

@@ -1,5 +1,5 @@
 // 3D scene: owns GPU meshes, tabletop transforms, ray picking, overlays and per-frame drawing.
-import { PLOTS, type PlotDef } from '../map/chelsea';
+import type { GameMap, PlotDef } from '../map/types';
 import { BUILDINGS, RULES, type BuildingType } from '../sim/rules';
 import { MeshBuilder, hex } from '../engine/geometry';
 import { Renderer, type Mesh } from '../engine/renderer';
@@ -10,15 +10,13 @@ import {
 import { MarkerAtlas, type MarkerEntry, type MarkerIcon, type MarkerTone } from '../engine/markers';
 import { uprightQuad } from '../engine/text';
 import {
-  PLOT_Y, buildLabels, buildPlotsLayer, buildStaticCity, cachedBuilding, plotFrame, plotMatrix, radiusRing,
+  PLOT_Y, buildLabelData, buildPlotsLayer, cachedBuilding, plotFrame, plotMatrix, radiusRing,
   vacantPlotLabels, type LabelData,
 } from './cityModel';
 import type { Game } from './game';
 import { NeighbourhoodLife } from './life';
 import { InspectorPanel, Tooltip, WorldPanel, type Action } from './panel';
 
-/** Map metres → world metres at scale 1 (400 m map ≈ 1 m model). */
-export const BASE_SCALE = 0.0025;
 export const SCALE_MIN = 0.6;
 export const SCALE_MAX = 1.8;
 const PLINTH_DEPTH = 16; // map metres below street level
@@ -29,6 +27,8 @@ export interface View {
   anchor: { x: number; y: number; z: number; yaw: number };
   modelYaw: number;
   modelScale: number;
+  /** 'map': north-up, tilted toward the player like a wall map (VR); desktop uses a top-down camera. */
+  mode: 'table' | 'map';
 }
 
 export type Hit =
@@ -70,6 +70,9 @@ export class CityScene {
   private staticMesh: Mesh;
   private plotsMesh: Mesh;
   private labelMesh: Mesh;
+  private minorLabelMesh: Mesh;
+  /** Minor street labels are hidden when the model is far away (normalised distance). */
+  showMinorLabels = true;
   private plotLabelMesh: Mesh;
   private labelTex: WebGLTexture;
   private labels: LabelData;
@@ -120,14 +123,21 @@ export class CityScene {
   private localRay: Ray = { origin: [0, 0, 0], dir: [0, 0, 0] };
   private v3: Vec3 = [0, 0, 0];
 
-  constructor(canvas: HTMLCanvasElement) {
+  readonly baseScale: number;
+  /** World half-size of the model at scale 1 (metres). */
+  readonly worldHalf: number;
+
+  constructor(canvas: HTMLCanvasElement, readonly map: GameMap) {
     this.r = new Renderer(canvas);
     const r = this.r;
-    this.staticMesh = r.litMesh(buildStaticCity().toFloat32());
+    this.baseScale = map.baseScale;
+    this.worldHalf = map.half * map.baseScale;
+    this.staticMesh = r.litMesh(map.buildStatic().toFloat32());
     this.plotsMesh = r.litMesh(new Float32Array(0));
-    this.labels = buildLabels();
+    this.labels = buildLabelData(map.labels(), map.plots, map.plotLabelSize);
     this.labelTex = r.createTexture(this.labels.canvas);
-    this.labelMesh = r.texMesh(this.labels.staticData);
+    this.labelMesh = r.texMesh(this.labels.major);
+    this.minorLabelMesh = r.texMesh(this.labels.minor);
     this.plotLabelMesh = r.texMesh(new Float32Array(0));
     this.frameMesh = r.litMesh(plotFrame().toFloat32());
     this.ringMesh = r.litMesh(radiusRing(RULES.effectRadius).toFloat32());
@@ -154,7 +164,7 @@ export class CityScene {
     this.markerTex = r.createTexture(this.markers.canvas);
     this.markerMesh = r.texMesh(new Float32Array(0));
     this.confetti = new Confetti(r);
-    this.life = new NeighbourhoodLife(r);
+    this.life = new NeighbourhoodLife(r, map);
     this.updateMatrices();
   }
 
@@ -171,15 +181,24 @@ export class CityScene {
     const v = this.view;
     const a = v.anchor;
     compose(this.anchorM, a.x, a.y, a.z, a.yaw);
-    const s = BASE_SCALE * v.modelScale;
-    compose(this.tmp, 0, PLINTH_DEPTH * s, 0, v.modelYaw, s);
+    const s = this.baseScale * v.modelScale;
+    if (v.mode === 'map') {
+      // Wall-map presentation: north away from the player, tilted up toward them. Only the model
+      // moves; the player's viewpoint is never moved.
+      const tilt = 0.95;
+      const half = this.worldHalf * v.modelScale;
+      compose(this.tmp, 0, Math.sin(tilt) * half + 0.04, -0.05, 0, s, tilt);
+    } else {
+      compose(this.tmp, 0, PLINTH_DEPTH * s, 0, v.modelYaw, s);
+    }
     multiply(this.modelM, this.anchorM, this.tmp);
     invert(this.modelInv, this.modelM);
     // Panels flank the table toward the player, tilted back like lecterns: menu left, inspector right.
-    compose(this.tmp, -0.78, 0.3, 0.3, 0.75, 1, -0.45);
+    const px = this.worldHalf + 0.3;
+    compose(this.tmp, -px, 0.3, 0.32, 0.75, 1, -0.45);
     multiply(this.panelM, this.anchorM, this.tmp);
     invert(this.panelInv, this.panelM);
-    compose(this.tmp, 0.76, 0.3, 0.3, -0.75, 1, -0.45);
+    compose(this.tmp, px, 0.3, 0.32, -0.75, 1, -0.45);
     multiply(this.inspM, this.anchorM, this.tmp);
     invert(this.inspInv, this.inspM);
     if (a.y !== this.tableHeight) this.rebuildTable();
@@ -189,8 +208,9 @@ export class CityScene {
     const h = this.view.anchor.y;
     this.tableHeight = h;
     const b = new MeshBuilder();
-    b.cylinder(0, 0, -0.035, 0, 0.66, 32, hex('#a77a55'));
-    b.cylinder(0, 0, -0.05, -0.035, 0.6, 32, hex('#8c6345'));
+    const r = Math.max(0.66, this.worldHalf * 1.3);
+    b.cylinder(0, 0, -0.035, 0, r, 40, hex('#a77a55'));
+    b.cylinder(0, 0, -0.05, -0.035, r - 0.06, 40, hex('#8c6345'));
     b.cylinder(0, 0, -h, -0.05, 0.06, 10, hex('#6f4f38'));
     b.cylinder(0, 0, -h, -h + 0.03, 0.3, 16, hex('#6f4f38'));
     this.tableMesh = this.r.litMesh(b.toFloat32(), this.tableMesh);
@@ -200,8 +220,8 @@ export class CityScene {
   sync(game: Game): void {
     if (game.buildingsVersion !== this.builtVersion) {
       this.builtVersion = game.buildingsVersion;
-      this.plotsMesh = this.r.litMesh(buildPlotsLayer(game.state.buildings, game.stats).toFloat32(), this.plotsMesh);
-      this.plotLabelMesh = this.r.texMesh(vacantPlotLabels(this.labels, game.state.buildings), this.plotLabelMesh);
+      this.plotsMesh = this.r.litMesh(buildPlotsLayer(this.map.plots, game.state.buildings, game.stats).toFloat32(), this.plotsMesh);
+      this.plotLabelMesh = this.r.texMesh(vacantPlotLabels(this.labels, this.map.plots, game.state.buildings), this.plotLabelMesh);
       this.life.sync(game.state, game.stats.residents);
     }
     const key = `${game.version}`;
@@ -239,9 +259,10 @@ export class CityScene {
     const t = rayPlaneY(lr, PLOT_Y);
     if (t !== null && (!best || t < best.t)) {
       const x = lr.origin[0] + lr.dir[0] * t, z = lr.origin[2] + lr.dir[2] * t;
-      if (Math.abs(x) <= 215 && Math.abs(z) <= 215) {
+      const lim = this.map.half + 15;
+      if (Math.abs(x) <= lim && Math.abs(z) <= lim) {
         const point = transformPoint(this.modelM, [x, PLOT_Y, z]);
-        const p = plotAt(x, z);
+        const p = plotAt(this.map.plots, x, z);
         best = p ? { kind: 'plot', plotId: p.id, point, t } : { kind: 'map', point, t };
       }
     }
@@ -258,7 +279,7 @@ export class CityScene {
   }
 
   pulse(kind: 'place' | 'upgrade', plotId: string): void {
-    const plot = PLOTS.find((p) => p.id === plotId);
+    const plot = this.map.plots.find((p) => p.id === plotId);
     if (plot) this.pulses.push({ plot, start: performance.now(), kind });
   }
 
@@ -292,6 +313,7 @@ export class CityScene {
     }
 
     r.drawTex(this.labelMesh, this.modelM, this.labelTex);
+    if (this.showMinorLabels) r.drawTex(this.minorLabelMesh, this.modelM, this.labelTex);
     r.drawTex(this.plotLabelMesh, this.modelM, this.labelTex);
 
     // Overlays: only while placing or inspecting
@@ -335,6 +357,10 @@ export class CityScene {
     }
 
     if (this.showPanel) {
+      if (this.panel.mapMode !== (this.view.mode === 'map')) {
+        this.panel.mapMode = this.view.mode === 'map';
+        this.panel.dirty = true;
+      }
       if (this.panel.dirty) {
         this.panel.draw(game, tickProgress);
         r.updateTexture(this.panelTex, this.panel.canvas);
@@ -374,7 +400,9 @@ export class CityScene {
       const len = Math.hypot(dx, dy, dz) || 1;
       const fx = dx / len, fy = dy / len, fz = dz / len;
       const ux = fy * rz - 0 * fz, uy = fz * rx - fx * rz, uz = fx * 0 - fy * rx; // up = f × r
-      const h = MARKER_H / 2, w = (MARKER_H * e.aspect) / 2;
+      // Roughly constant on-screen size: shrink when the viewer is close (desktop zoom), cap for VR.
+      const mh = Math.min(MARKER_H, Math.max(0.006, len * 0.03));
+      const h = mh / 2, w = (mh * e.aspect) / 2;
       const s = Math.sign(uy) || 1;
       const corner = (cx: number, cy: number, u: number, v: number, o: number) => {
         d[o] = px + rx * cx + ux * cy * s;
@@ -393,7 +421,7 @@ export class CityScene {
       n++;
       return true;
     };
-    const unit = BASE_SCALE * this.view.modelScale;
+    const unit = this.baseScale * this.view.modelScale;
     for (const m of list) if (put(m.plot.x, 0, m.plot.z, m.entry)) this.lift(n - 1, 36 + (m.stack * MARKER_H * 1.15) / unit);
     for (const p of pulses) {
       if (p.kind !== 'upgrade') continue;
@@ -412,7 +440,7 @@ export class CityScene {
   private lift(i: number, h: number): void {
     if (i < 0) return;
     const d = this.markerData;
-    const up = BASE_SCALE * this.view.modelScale * h;
+    const up = this.baseScale * this.view.modelScale * h;
     for (let k = 0; k < 6; k++) d[i * 30 + k * 5 + 1] += up;
   }
 
@@ -421,20 +449,26 @@ export class CityScene {
     const dx = eye[0] - this.v3[0], dy = eye[1] - this.v3[1], dz = eye[2] - this.v3[2];
     const yaw = Math.atan2(dx, dz);
     const pitch = -Math.atan2(dy, Math.hypot(dx, dz)); // face the viewer fully
-    compose(out, this.v3[0], this.v3[1] + 0.03, this.v3[2], yaw, 1, pitch);
+    const dist = Math.hypot(dx, dy, dz);
+    const s = Math.min(1, Math.max(0.25, dist / 0.95)); // keep the tooltip readable but not huge up close
+    compose(out, this.v3[0], this.v3[1] + 0.03 * s, this.v3[2], yaw, s, pitch);
   }
 }
 
 const identityM = mat4();
 
 export function defaultView(): View {
-  return { anchor: { x: 0, y: 0.8, z: 0, yaw: 0 }, modelYaw: 0, modelScale: 1 };
+  return { anchor: { x: 0, y: 0.8, z: 0, yaw: 0 }, modelYaw: 0, modelScale: 1, mode: 'table' };
 }
 
-export function plotAt(x: number, z: number): PlotDef | null {
-  for (const p of PLOTS) {
-    const h = p.size / 2 + 1;
-    if (Math.abs(x - p.x) <= h && Math.abs(z - p.z) <= h) return p;
+/** Plot containing a map-space point (plots are rotated rectangles), with a 1 m grace margin. */
+export function plotAt(plots: readonly PlotDef[], x: number, z: number): PlotDef | null {
+  for (const p of plots) {
+    const dx = x - p.x, dz = z - p.z;
+    const c = Math.cos(p.angle), s = Math.sin(p.angle);
+    // inverse of the plot rotation (local x along frontage, local z toward the street)
+    const lx = dx * c - dz * s, lz = dx * s + dz * c;
+    if (Math.abs(lx) <= p.w / 2 + 1 && Math.abs(lz) <= p.d / 2 + 1) return p;
   }
   return null;
 }

@@ -1,8 +1,10 @@
 # Chelsea Mini City
 
-A cosy, single-player tabletop city-builder for **Meta Quest 3** (WebXR in the Quest Browser), with a desktop fallback. You look down at a miniature Chelsea-inspired neighbourhood around King's Road and Duke of York Square, and you improve it by building homes, shops and parks.
+A cosy, single-player tabletop city-builder for **Meta Quest 3** (WebXR in the Quest Browser), with a desktop fallback. You look down at a miniature of the real streets around King's Road, Duke of York Square and Sloane Square in Chelsea, London, and improve the neighbourhood by building homes, shops and parks on fictional development plots.
 
-> **Chelsea-inspired; approximate street layout.** The map is hand-authored and approximate. It does not use surveyed geographic data. Every building is original, procedurally generated geometry.
+> **Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright)** (ODbL 1.0). Streets, squares, green spaces, building footprints and landmark positions come from OpenStreetMap. Architecture is stylised, and the numbered development plots are fictional.
+
+![Top-down map view, north up](docs/map-topdown.png)
 
 **Live (after deployment):** https://vrmaria27.github.io/chelsea-mini-city-/
 
@@ -46,6 +48,8 @@ After chapter 3 you can keep building freely (sandbox). The status panel shows a
 | Model size | Smaller/Larger or `-` `+` | Panel buttons, or flick thumbstick up/down |
 | Table height | n/a | ▼ Lower / ▲ Raise |
 | Reset view | Button or `R` | Reset view (re-centres the table in front of you; works seated or standing) |
+| Map view (north up) | Button or `M`: top-down camera, north at the top, all street names; press again for the tabletop view | Map view: the model turns north-away and tilts up toward you like a wall map (your viewpoint never moves); Tabletop view returns |
+| About / attribution | "About" link under the title | Attribution line on the menu panel |
 | Undo last action (build or upgrade, exact refund) | Button or `Z` | ↶ Undo last action |
 | Reduced motion / Low detail | Toggles in the controls card | Toggles on the menu panel |
 | Reset save | Button + confirmation dialog | Press twice within 5 s |
@@ -56,6 +60,63 @@ After chapter 3 you can keep building freely (sandbox). The status panel shows a
 
 Progress, chapters and preferences save to the browser's local storage after every build, upgrade, undo, setting change and income tick. The simulation pauses while the page is hidden, and it never fast-forwards on resume. Nothing is earned offline.
 
+## Map data
+
+| | |
+|---|---|
+| Area | 700 m × 700 m, centred on **51.4912 N, 0.1600 W**, between Duke of York Square and the western part of the King's Road section |
+| Bounding box | south 51.488052, west -0.165055, north 51.494348, east -0.154945 |
+| Source | OpenStreetMap via the Overpass API (`overpass-api.de`) |
+| Retrieved | 2026-11-09 21:08 UTC (OSM data as of 2026-11-09T21:07:05Z) |
+| Licence | Open Database License 1.0; attribution "© OpenStreetMap contributors" is shown on the model, the HUD, the VR panel and the About panel |
+| Map version | `chelsea-osm` v1 (saves record the map id and version) |
+
+**How it's built (reproducible).**
+1. `npm run import:map:fetch` queries Overpass for a slightly larger box: highways, buildings, parks and gardens, squares, pedestrian areas and named landmarks. It saves `data/osm/raw.json` with the query, endpoint and timestamp. This sandbox can't reach Overpass, so the **Import OSM map data** GitHub Action ran the same script and committed the extract. Any Overpass JSON placed at `data/osm/raw.json` also works.
+2. `npm run import:map` (`scripts/osm/process.mjs`, no dependencies) then:
+   - projects to local metres (equirectangular about the centre; x east, z south; < 0.01% scale error) and clips to the box,
+   - simplifies roads (0.5 m; 0.8 m for footways) while **keeping every junction vertex**, and simplifies footprints (0.3 m, area kept within 4%),
+   - triangulates roofs and areas, keeping courtyards as holes,
+   - places labels and fits the game plots,
+   - writes `src/map/osm/chelsea-osm.json` (bundled; the game makes **no map requests at runtime**).
+
+   It also keeps OSM ids, names, highway classes and building tags, and prints validation checks.
+
+**Sourced vs estimated vs fictional.**
+- **From OSM:**
+  - street centrelines, curves, junctions, names and classes (main / street / service / pedestrian / footpath),
+  - pedestrian areas and squares, parks and gardens,
+  - 716 building footprints; heights from `height` (2, counted across the whole extract) or `building:levels` × 3.2 m + 1 m (2174),
+  - landmark positions.
+- **Estimated (documented):**
+  - Road widths: OSM `width` where tagged (only 1 segment), otherwise by class:
+
+    | Class | Width |
+    |---|---|
+    | primary | 12 m |
+    | secondary | 11 m |
+    | tertiary | 9 m |
+    | residential | 7 m |
+    | service | 4.5 m |
+    | pedestrian | 6 m |
+    | footway | 2.2 m |
+
+    These are not surveyed measurements.
+  - Building heights without tags (489 across the extract): a deterministic 3–5 storeys from the OSM id (3.5 m sheds; 18 m churches).
+- **Stylised:** façade colours, flat roofs, trees inside green spaces, people and traffic.
+- **Fictional:** the 20 development plots. They're fitted to real frontages, kept clear of every road and footpath buffer, plaza, green space and protected landmark, and face their street. The 52 real footprints under them are hidden on the model. They are not claims that any property is vacant or available.
+
+**Verification (automated, `tests/geo.test.ts` and importer checks):**
+- No mirroring, axis swap or stretch: east is +x and north is −z, and projected distances match great-circle distances to within 0.1%.
+- King's Road runs south-west to north-east (bearing 45–75°) into Sloane Square.
+- Junction connectivity holds: King's Road ↔ Sloane Square, Lower Sloane Street ↔ Sloane Square, Cheltenham Terrace ↔ King's Road, Blacklands Terrace ↔ King's Road, Turks Row ↔ Lower Sloane Street.
+- Seven landmarks appear in their correct relative positions: Sloane Square station, the Royal Court Theatre east of Peter Jones, the Saatchi Gallery east of Duke of York Square, Holy Trinity north of the Royal Court, and Burton Court south of the Saatchi Gallery.
+- Plots don't touch roads, footpaths, other plots, plazas, green spaces, visible buildings or protected landmarks.
+- Simulation distances are map metres, independent of tabletop zoom.
+- No `fetch`/XHR/tile requests appear in the app source. A browser run of the built game recorded no external requests.
+
+The map was **not** compared side by side with Google Maps by me. Use the top-down screenshot above (or press **Map view** in the game) to compare it yourself.
+
 ## Install, run, build
 
 Requires **Node.js 20+**.
@@ -63,7 +124,8 @@ Requires **Node.js 20+**.
 ```bash
 npm install        # dev tools only: esbuild, TypeScript, tsx
 npm run dev        # dev server with live rebuild → http://localhost:5173/
-npm test           # unit tests (simulation, upgrades, previews, undo, chapters, save migration)
+npm test           # unit tests (simulation, upgrades, previews, undo, chapters, save migration, geography)
+npm run import:map # rebuild the bundled map from data/osm/raw.json (offline, deterministic)
 npm run build      # type-check + production bundle → dist/
 npm run preview    # serve dist/ → http://localhost:5173/
 npm run check      # typecheck + tests + build
@@ -92,7 +154,9 @@ Open the printed `https://192.168.x.x:5173/` on the Quest and accept the self-si
 
 Not yet verified on a headset. Please check:
 
-- [ ] Page loads in the Quest Browser over HTTPS and shows **Enter VR**. A Milestone 1 save loads with its buildings intact.
+- [ ] Page loads in the Quest Browser over HTTPS and shows **Enter VR**. An older save moves to the real map with its buildings intact (message shown).
+- [ ] The real street layout is recognisable at tabletop scale: King's Road, Sloane Square, Duke of York Square and the street names are readable. The "N" arrow on the plinth points north.
+- [ ] **Map view** turns the model north-away and tilts it toward you without moving your viewpoint; **Tabletop view** returns it.
 - [ ] The table appears in front of you at a comfortable height, **standing** and **seated** (use *Reset view* after sitting down). The menu panel is on the left and the inspector on the right, both readable at arm's length.
 - [ ] Both controller rays appear and stop on the panels and on the map.
 - [ ] **Panels block the map:** pulling the trigger on a panel (including the gaps between buttons) never builds on a plot behind it.
@@ -110,7 +174,11 @@ Not yet verified on a headset. Please check:
 
 ```
 src/sim/        Pure rules: simulation, upgrades, estimates, inspection, chapters, tick clock, save v2 + migration
-src/map/        Static map definition: roads, squares, blocks, 20 plots, labels
+src/map/        osmMap.ts (real map from bundled OSM data), legacyMap.ts + chelsea.ts (old approximate map), types
+src/map/osm/    chelsea-osm.json: processed, bundled OSM-derived map (ODbL)
+scripts/osm/    fetch.mjs (Overpass extract), process.mjs (projection, clipping, plots, labels), geo.mjs
+data/osm/       raw.json: the unmodified OSM extract the bundled map was built from (ODbL)
+docs/           screenshots (top-down map view, gameplay)
 src/engine/     Tiny WebGL2 renderer (incl. instancing), geometry builder, maths, text + marker atlases
 src/game/       Game controller, inspector view model, city model, scene + overlays + picking, VR panels, life
 src/main.ts     Desktop camera/input, HTML HUD, WebXR session and controllers
@@ -125,21 +193,25 @@ scripts/        esbuild build and dev/preview server
 - **Performance choices:** all static scenery (terraces, roads, squares and trees, about 25k triangles) is merged into **one** vertex buffer and one draw call. The building layer is rebuilt only when buildings change. All map labels share one texture atlas. Lighting is a cheap hemisphere + sun model, with no shadows, post-processing or large textures. Frame rate on Quest 3 has **not** been measured.
 - **Neighbourhood life:** at most 24 pedestrians (more as the population grows) walk fixed pavement loops around populated blocks, inset from the kerb so they never cross buildings. Six vehicles, including a red bus, drive fixed King's Road and side-street lanes on the left. People and vehicles each take one instanced draw call. There's no pathfinding or collision.
 - **Previews are exact:** placement and upgrade estimates are computed by applying the real rules to a copy of the city, and tests check them against actual results.
-- **Save format (v2):** `localStorage["chelsea-mini-city.save"] = { version: 2, savedAt, state: { money, buildings: {plot: {type, level}}, lastAction, chapter, ticks }, prefs }`.
-  - Milestone 1 (v1) saves migrate automatically. Buildings become Level 1, and money, placements, ticks and undo history are kept. Chapter completion is derived from the old objective flag and the current state.
-  - Unreadable or unsupported saves start a new game with a notice. The original text is kept under `chelsea-mini-city.save.backup`.
-  - Unknown plots or building types are skipped, and refunds always use the canonical price.
+- **Save format (v3):** `localStorage["chelsea-mini-city.save"] = { version: 3, map: { id, version }, state: { money, buildings: {plot: {type, level}}, lastAction, chapter, ticks }, prefs }`.
+- **Moving saves to the real map:** v1/v2 saves belong to the legacy approximate map. On load they are moved through a deterministic table (`legacyPlotMap` in the bundled map data).
+  - The importer builds three real-map clusters with the same sizes as the legacy ones (6, 9 and 5 plots). It pairs plots by distance rank from each cluster centre, so a legacy centre plot maps to the most central real plot.
+  - Building types, levels, money, ticks, undo history and completed chapters are kept. Chapters never decrease. Happiness can change slightly because real distances differ.
+  - The original save is always copied to `chelsea-mini-city.save.backup`.
+- **If a placement can't be mapped** (or the save belongs to an unknown map), the game saves nothing and asks the player to **continue on the legacy map** or **start on the real map**. The backup stays either way. The legacy map can also be chosen any time from About (`?map=legacy` works too).
+- Unreadable or unsupported saves start a new game with a notice and a backup. Unknown plots or building types are skipped, and refunds always use the canonical price.
 
 ## Economy and pacing
 
-No prices or incomes were changed from the brief. The automated playthrough test (`tests/milestone2.test.ts`) completes all three chapters with legal moves. On that optimal route a player only has to wait about **8 income ticks (≈1.3 minutes)** in total. Real sessions are dominated by deciding, previewing and inspecting, so they should land in the 15–20 minute range, but this hasn't been playtested with people. If chapters 2–3 feel too quick, the simplest lever is the upgrade prices in `src/sim/rules.ts`. The chapter thresholds were checked as achievable on the existing map and are unchanged.
+No prices or incomes were changed from the brief. The automated playthroughs complete all three chapters with legal moves on both maps. On the real map a solver finds a route in the Cadogan Gardens cluster (`tests/geo.test.ts`) that waits only **9 income ticks (≈1.5 minutes)** in total. Real sessions are dominated by deciding, previewing and inspecting, so they should land in the 15–20 minute range, but this hasn't been playtested with people. If chapters 2–3 feel too quick, the simplest lever is the upgrade prices in `src/sim/rules.ts`. The chapter thresholds were checked as achievable on the existing map and are unchanged.
 
 ## Known limitations
 
 - Not yet tested on a Quest 3 headset (controller input, panel readability, comfort and performance are unverified).
-- The street layout is approximate and stylised; distances are not to survey accuracy.
+- Geography is limited to a 700 m square and to what OpenStreetMap contains. Road widths are class estimates, and some building heights are estimated (see Map data). Roofs are flat and façades stylised.
+- One-way streets and lane counts aren't modelled; decorative vehicles use both directions.
 - Undo covers only the most recent build or upgrade. Completed chapters are never revoked by undo.
-- People and vehicles are decorative. Vehicles pass through junctions without stopping and reappear at the map edge.
+- People and vehicles are decorative and tiny at this scale. Pedestrians walk OSM footways and turn back at their ends. Vehicles drive real carriageways, pass through junctions without stopping and reappear at the start of their route.
 - Hand tracking without controllers isn't specifically supported (controllers are expected).
 - No sound.
 - Some automated review browsers can't start WebGL2. The game shows an explanatory message there and otherwise needs a WebGL2-capable browser.

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Chelsea Mini City</title>
-  <meta name="description" content="A cosy tabletop city-building prototype for Meta Quest 3 and desktop, set in a Chelsea-inspired neighbourhood." />
+  <meta name="description" content="A cosy tabletop city-building game for Meta Quest 3 and desktop on a real OpenStreetMap model of Chelsea, London." />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M4 30V14l8-6 8 6v16z' fill='%23a9563f'/%3E%3Cpath d='M18 30V18l5-4 5 4v12z' fill='%23f0e7d4'/%3E%3C/svg%3E" />
   <style>
     :root {
@@ -93,6 +93,14 @@
     #onboarding ol { margin: 0 0 14px; padding-left: 22px; font-size: 17px; line-height: 1.7; }
     #onboarding p { color: var(--soft); font-size: 13px; margin: 0 0 14px; }
     #onboarding button { background: var(--green); color: #fff; border-color: var(--green); font-weight: 700; padding: 10px 18px; }
+    .modal { position: fixed; z-index: 5; inset: 0; display: grid; place-items: center; background: rgba(40, 32, 24, 0.3); }
+    .modal .card { width: min(560px, 92vw); max-height: 86vh; overflow: auto; padding: 20px 24px; font-size: 14px; line-height: 1.5; }
+    .modal h2 { margin: 0 0 10px; }
+    .modal .sub { color: var(--soft); }
+    .choice-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
+    #aboutClose, #choiceNew { background: var(--green); color: #fff; border-color: var(--green); font-weight: 700; }
+    button.link { border: 0; background: none; padding: 0; color: var(--green); text-decoration: underline; font-size: inherit; }
+    #status .note a { color: var(--green); }
     #error { position: fixed; inset: 0; display: none; place-items: center; z-index: 9; background: var(--bg); padding: 24px; text-align: center; }
     @media (max-width: 760px) {
       #status { width: calc(100vw - 16px); left: 8px; top: 8px; padding: 8px 10px; }
@@ -121,7 +129,7 @@
 
   <section id="status" class="hud card" aria-live="polite">
     <h1>Chelsea Mini City</h1>
-    <p class="note">Chelsea-inspired; approximate street layout</p>
+    <p class="note" id="attribution"></p>
     <div class="stats">
       <div class="stat"><span>Money</span><b id="money">£10,000</b></div>
       <div class="stat"><span>Residents</span><b id="residents">0</b></div>
@@ -140,11 +148,13 @@
     <button data-action="rotR" title="Rotate model (E)">Rotate ↻</button>
     <button data-action="scaleDown" title="Smaller model (-)">− Smaller</button>
     <button data-action="scaleUp" title="Larger model (+)">+ Larger</button>
+    <button data-action="mapView" class="wide" aria-pressed="false" title="Top-down, north-up view (M)">Map view (north up)</button>
     <button data-action="resetView" class="wide" title="Reset camera and model (R)">Reset view</button>
     <button data-action="resetSave" id="resetSave" class="wide">Reset save</button>
     <button data-action="toggleMotion" id="toggleMotion" class="wide" aria-pressed="false">Reduced motion: Off</button>
     <button data-action="toggleDetail" id="toggleDetail" class="wide" aria-pressed="false">Low detail: Off</button>
-    <button data-action="help" class="wide">How to play</button>
+    <button data-action="help">How to play</button>
+    <button data-action="about">About</button>
   </section>
 
   <section id="inspector" class="hud card idle" aria-live="polite" aria-label="Inspector"></section>
@@ -170,6 +180,25 @@
       </ol>
       <p>Homes start at 50 happiness; a shop within 80 m adds 10 and each park within 80 m adds 10. Hover a plot to see the exact effect before you buy. Use <b>Inspect</b> to see why a building is (or isn't) doing well, and to <b>upgrade</b> it to Level 2. Work through three neighbourhood chapters; income arrives every 10 seconds of play.</p>
       <button id="obClose">Start building</button>
+    </div>
+  </div>
+
+  <div id="about" class="modal" hidden>
+    <div class="card" role="dialog" aria-labelledby="aboutTitle">
+      <h2 id="aboutTitle">About this map</h2>
+      <div id="aboutBody"></div>
+      <button id="aboutClose">Close</button>
+    </div>
+  </div>
+
+  <div id="choice" class="modal" hidden>
+    <div class="card" role="dialog" aria-labelledby="choiceTitle">
+      <h2 id="choiceTitle">Your saved city needs a decision</h2>
+      <p id="choiceBody"></p>
+      <div class="choice-buttons">
+        <button id="choiceLegacy">Continue on the legacy map</button>
+        <button id="choiceNew">Start on the real Chelsea map</button>
+      </div>
     </div>
   </div>
 
