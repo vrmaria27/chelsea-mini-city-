@@ -1,0 +1,192 @@
+{
+ "mapVersion": 2,
+ "note": "Curated fictional development sites (OSM building footprints cleared for gameplay). Edit deliberately; bump the map version when changing.",
+ "sites": [
+  {
+   "osm": [
+    "w124038807"
+   ],
+   "cluster": "blacklands",
+   "area": "Blacklands Terrace",
+   "street": "Lincoln Street"
+  },
+  {
+   "osm": [
+    "w805981257",
+    "w805981259"
+   ],
+   "cluster": "blacklands",
+   "area": "Blacklands Terrace",
+   "street": "Blacklands Terrace"
+  },
+  {
+   "osm": [
+    "w897420428"
+   ],
+   "cluster": "blacklands",
+   "area": "Blacklands Terrace",
+   "street": "Blacklands Terrace"
+  },
+  {
+   "osm": [
+    "w120654475",
+    "w120654494"
+   ],
+   "cluster": "blacklands",
+   "area": "Blacklands Terrace",
+   "street": "King's Road"
+  },
+  {
+   "osm": [
+    "w897528298",
+    "w897528297"
+   ],
+   "cluster": "cadogan",
+   "area": "Cadogan Gardens",
+   "street": "Cadogan Gardens"
+  },
+  {
+   "osm": [
+    "w897528300",
+    "w897528299"
+   ],
+   "cluster": "cadogan",
+   "area": "Cadogan Gardens",
+   "street": "Cadogan Gardens"
+  },
+  {
+   "osm": [
+    "w897528295"
+   ],
+   "cluster": "cadogan",
+   "area": "Cadogan Gardens",
+   "street": "Cadogan Gardens"
+  },
+  {
+   "osm": [
+    "w897473464"
+   ],
+   "cluster": "cadogan",
+   "area": "Cadogan Gardens",
+   "street": "Cadogan Gardens"
+  },
+  {
+   "osm": [
+    "w897473451",
+    "w897473465"
+   ],
+   "cluster": "cadogan",
+   "area": "Cadogan Gardens",
+   "street": "Cadogan Square"
+  },
+  {
+   "osm": [
+    "w896656227",
+    "w896656228"
+   ],
+   "cluster": "cadogan",
+   "area": "Cadogan Gardens",
+   "street": "Draycott Terrace"
+  },
+  {
+   "osm": [
+    "w112306866"
+   ],
+   "cluster": "cadogan",
+   "area": "Cadogan Gardens",
+   "street": "Clabon Mews"
+  },
+  {
+   "osm": [
+    "w865860951"
+   ],
+   "cluster": "cadogan",
+   "area": "Cadogan Gardens",
+   "street": "Clabon Mews"
+  },
+  {
+   "osm": [
+    "w806116008"
+   ],
+   "cluster": "royal-avenue",
+   "area": "King's Road & Royal Avenue",
+   "street": "Tryon Street"
+  },
+  {
+   "osm": [
+    "w806115976"
+   ],
+   "cluster": "royal-avenue",
+   "area": "King's Road & Royal Avenue",
+   "street": "Royal Avenue"
+  },
+  {
+   "osm": [
+    "w120654464",
+    "w120654472"
+   ],
+   "cluster": "royal-avenue",
+   "area": "King's Road & Royal Avenue",
+   "street": "King's Road"
+  },
+  {
+   "osm": [
+    "w899360831",
+    "w899360832"
+   ],
+   "cluster": "lower-sloane",
+   "area": "Holbein Place & Mews",
+   "street": "Holbein Mews"
+  },
+  {
+   "osm": [
+    "w533042672",
+    "w533042671",
+    "w533042669"
+   ],
+   "cluster": "lower-sloane",
+   "area": "Holbein Place & Mews",
+   "street": "Holbein Mews"
+  },
+  {
+   "osm": [
+    "w549173220"
+   ],
+   "cluster": "lower-sloane",
+   "area": "Holbein Place & Mews",
+   "street": "Holbein Place"
+  },
+  {
+   "osm": [
+    "w104764452"
+   ],
+   "cluster": "markham",
+   "area": "Markham Square & Bywater Street",
+   "street": "Sprimont Place"
+  },
+  {
+   "osm": [
+    "w895551817"
+   ],
+   "cluster": "markham",
+   "area": "Markham Square & Bywater Street",
+   "street": "Sloane Avenue"
+  },
+  {
+   "osm": [
+    "w112243933"
+   ],
+   "cluster": "markham",
+   "area": "Markham Square & Bywater Street",
+   "street": "Sloane Avenue"
+  },
+  {
+   "osm": [
+    "w866550812"
+   ],
+   "cluster": "draycott",
+   "area": "Draycott Avenue",
+   "street": "Draycott Avenue"
+  }
+ ]
+}

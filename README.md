@@ -11,8 +11,16 @@ A cosy, single-player tabletop city-builder for **Meta Quest 3** (WebXR in the Q
 ## How to play
 
 1. **Choose a building**: Townhouse £1,000, Shop £1,500 or Park £750.
-2. **Point at an empty plot** (numbered pads). You'll see a ghost preview, the cost and the **exact effect** before you buy. Homes that would gain happiness get a green outline and a "+10 ♥" label, and shops and parks show their 80 m reach ring. The inspector lists the before → after residents, income and average happiness.
+2. **Point at an empty plot**: one of the 22 numbered development sites, each marked by a green post with a gold diamond and a sandy, fenced pad. You'll see a ghost preview, the cost and the **exact effect** before you buy. Homes that would gain happiness get a green outline and a "+10 ♥" label, and shops and parks show their 80 m reach ring. The inspector lists the before → after residents, income and average happiness.
 3. **Build a happier Chelsea**: click (desktop) or pull the trigger (VR) to confirm.
+
+**Development sites.** There are 22 fictional sites spread over six neighbourhoods: Cadogan Gardens (8), Blacklands Terrace (4), Holbein Place & Mews (3), King's Road & Royal Avenue (3), Sloane Avenue & Sprimont Place (3) and Draycott Avenue (1). Each one replaces one ordinary building footprint, or a short row of them, and faces its street. Buildings are sized to fit each site rather than stretched: a wide site gets a longer terrace with more houses, a larger shop front or a bigger park. Some narrow sites can't take a park (it needs 8 × 8 m), and the preview says so before you pay. When you choose a tool, every site that fits it is outlined in pulsing green, and the counter beside the tools shows how many free sites fit (for example, "10 of 15 free sites fit a park"). If none fit, the message suggests what to build instead. **Show buildable sites** (or `B`) turns the posts and the always-on outlines on and off. Compatible sites are still outlined while a build tool is selected.
+
+| Empty sites, townhouse tool selected | The same area after two parks, a shop and four homes |
+|---|---|
+| ![Empty Cadogan Gardens sites](docs/sites-cadogan-empty.png) | ![Cadogan Gardens after building](docs/sites-cadogan-built.png) |
+
+*Tip for chapter 3:* the Cadogan Gardens cluster is the place for it. Two upgraded parks there (for example, sites 5 and 6) reach most of the homes around them.
 
 **Inspect and upgrade.** Choose **Inspect**, or select any occupied plot with any tool, to see:
 - the building's level, residents and income,
@@ -51,6 +59,7 @@ After chapter 3 you can keep building freely (sandbox). The status panel shows a
 | Map view (north up) | Button or `M`: top-down camera, north at the top, all street names; press again for the tabletop view | Map view: the model turns north-away and tilts up toward you like a wall map (your viewpoint never moves); Tabletop view returns |
 | About / attribution | "About" link under the title | Attribution line on the menu panel |
 | Undo last action (build or upgrade, exact refund) | Button or `Z` | ↶ Undo last action |
+| Show buildable sites | Toggle in the controls card, or `B` | Show sites toggle on the menu panel |
 | Reduced motion / Low detail | Toggles in the controls card | Toggles on the menu panel |
 | Reset save | Button + confirmation dialog | Press twice within 5 s |
 
@@ -104,14 +113,22 @@ Progress, chapters and preferences save to the browser's local storage after eve
     These are not surveyed measurements.
   - Building heights without tags (489 across the extract): a deterministic 3–5 storeys from the OSM id (3.5 m sheds; 18 m churches).
 - **Stylised:** façade colours, flat roofs, trees inside green spaces, people and traffic.
-- **Fictional:** the 20 development plots. They're fitted to real frontages, kept clear of every road and footpath buffer, plaza, green space and protected landmark, and face their street. The 52 real footprints under them are hidden on the model. They are not claims that any property is vacant or available.
+- **Fictional:** the 22 development sites (map version 2). Each is an ordinary OSM building footprint, or a group of 2–4 adjoining small footprints, that the game "clears" for redevelopment. The 32 real footprints under them are hidden on the model. They are not claims that any property is vacant, for sale or available. Peter Jones, other landmarks, named buildings, squares, parks, streets and footpaths are never used.
+
+**How the sites are chosen** (`scripts/osm/process.mjs`):
+- The list is curated and versioned in `data/osm/sites-v2.json` (OSM way ids per site). The importer rebuilds each site from that list and warns if one is no longer valid. It does not silently pick new ones. `node scripts/osm/process.mjs data/osm/raw.json src/map/osm/chelsea-osm.json --propose` regenerates the proposal.
+- Each candidate is 140–1000 m², roughly rectangular (≥ 72% of its oriented box) and at least 6 × 6 m inside. It needs a frontage edge running parallel to, and within 12 m of, a named street. The street-facing direction is the edge that touches the street.
+- Each site stores its real boundary polygon, an oriented building rectangle inset at least 0.5 m inside that boundary, its street, its allowed types (townhouse 6 × 6 m, shop 7 × 6 m, park 8 × 8 m) and a sentence for each type that doesn't fit.
+- Rejected: anything touching a protected landmark, overlapping a green space or plaza, crossing a road or footway buffer, or containing any other visible building (sampled on a 1 m grid).
+- One shared definition drives rendering, picking (desktop ray and VR ray both test the boundary polygon), validation and the simulation's real-metre distances.
 
 **Verification (automated, `tests/geo.test.ts` and importer checks):**
 - No mirroring, axis swap or stretch: east is +x and north is −z, and projected distances match great-circle distances to within 0.1%.
 - King's Road runs south-west to north-east (bearing 45–75°) into Sloane Square.
 - Junction connectivity holds: King's Road ↔ Sloane Square, Lower Sloane Street ↔ Sloane Square, Cheltenham Terrace ↔ King's Road, Blacklands Terrace ↔ King's Road, Turks Row ↔ Lower Sloane Street.
 - Seven landmarks appear in their correct relative positions: Sloane Square station, the Royal Court Theatre east of Peter Jones, the Saatchi Gallery east of Duke of York Square, Holy Trinity north of the Royal Court, and Burton Court south of the Saatchi Gallery.
-- Plots don't touch roads, footpaths, other plots, plazas, green spaces, visible buildings or protected landmarks.
+- Sites don't touch roads, footpaths, other sites, plazas, green spaces, visible buildings or protected landmarks. Each faces its street, its building rectangle lies inside its boundary, and every building model (both levels) stays inside its site (`tests/sites.test.ts`).
+- An exhaustive search confirms that all three chapters can be completed with legal, affordable placements. The best layout reaches 82 average happiness against the 80 target.
 - Simulation distances are map metres, independent of tabletop zoom.
 - No `fetch`/XHR/tile requests appear in the app source. A browser run of the built game recorded no external requests.
 
@@ -201,6 +218,8 @@ Not yet verified on a headset. Please check:
 - [ ] The table appears in front of you at a comfortable height, **standing** and **seated** (use *Reset view* after sitting down). The menu panel is on the left and the inspector on the right, both readable at arm's length.
 - [ ] Both controller rays appear and stop on the panels and on the map.
 - [ ] **Panels block the map:** pulling the trigger on a panel (including the gaps between buttons) never builds on a plot behind it.
+- [ ] With a build tool selected, the free sites that fit it pulse green and the counter updates. Green-and-gold site posts are visible from the tabletop. **Show sites** on the menu panel hides and shows the posts.
+- [ ] The controller ray can target every numbered site, including the narrow ones (for example, sites 12 and 13). Pointing a park at a narrow site explains "Too small for a park" before you pull the trigger.
 - [ ] Previewing a park or shop shows the ring, green outlines and "+10 ♥" labels on affected homes, and the inspector lists before → after numbers. The building you then get matches the preview.
 - [ ] Pointing at an occupied plot and pulling the trigger opens its details. **Upgrade** charges once, shows the Level 2 look and a gold "Level 2" pulse, then greys out.
 - [ ] **Undo last action** reverses an upgrade or a build with an exact refund.
@@ -251,6 +270,8 @@ No prices or incomes were changed from the brief. The automated playthroughs com
 - Not yet tested on a Quest 3 headset (controller input, panel readability, comfort and performance are unverified).
 - Geography is limited to a 700 m square and to what OpenStreetMap contains. Road widths are class estimates, and some building heights are estimated (see Map data). Roofs are flat and façades stylised.
 - One-way streets and lane counts aren't modelled; decorative vehicles use both directions.
+- The 22 development sites are fictional and the player can't choose other buildings. Narrow sites accept only townhouses and shops. Chapter 3 needs a deliberate layout: it is achievable, but with little slack (best case 82 happiness against 80).
+- Saves from map version 1 (plots g1–g20) move each building to the matching new site, or to the nearest free site that fits it. If any building can't be placed, the game asks before changing anything. A backup of the old save is always kept (`chelsea-mini-city.save.backup` in local storage).
 - Undo covers only the most recent build or upgrade. Completed chapters are never revoked by undo.
 - People and vehicles are decorative and tiny at this scale. Pedestrians walk OSM footways and turn back at their ends. Vehicles drive real carriageways, pass through junctions without stopping and reappear at the start of their route.
 - Hand tracking without controllers isn't specifically supported (controllers are expected).

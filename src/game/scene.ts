@@ -10,7 +10,7 @@ import {
 import { MarkerAtlas, type MarkerEntry, type MarkerIcon, type MarkerTone } from '../engine/markers';
 import { uprightQuad } from '../engine/text';
 import {
-  PLOT_Y, buildLabelData, buildPlotsLayer, cachedBuilding, plotFrame, plotMatrix, radiusRing,
+  PLOT_Y, buildLabelData, buildPlotsLayer, plotBuilding, plotMatrix, radiusRing, siteBeacon, siteOutline,
   vacantPlotLabels, type LabelData,
 } from './cityModel';
 import type { Game } from './game';
@@ -50,6 +50,7 @@ const FRAME_BAD: Tint = [0.9, 0.3, 0.25, 1];
 const FRAME_SELECT: Tint = [0.95, 0.66, 0.15, 1];
 const FRAME_AFFECT: Tint = [0.3, 0.78, 0.45, 1];
 const FRAME_SOURCE: Tint = [0.3, 0.62, 0.86, 1];
+const FRAME_FREE: Tint = [0.24, 0.62, 0.45, 1];
 const RING_TINT: Tint = [1, 0.97, 0.88, 1];
 const RAY_TINT: Tint = [0.98, 0.96, 0.9, 1];
 const PULSE_PLACE: Tint = [0.98, 0.95, 0.85, 1];
@@ -57,7 +58,7 @@ const PULSE_UPGRADE: Tint = [0.95, 0.75, 0.25, 1];
 
 interface FrameOverlay { plot: PlotDef; tint: Tint; scale: number }
 interface MarkerOverlay { plot: PlotDef; entry: MarkerEntry; stack: number; rise?: number }
-interface Overlays { frames: FrameOverlay[]; markers: MarkerOverlay[]; ring: PlotDef | null }
+interface Overlays { frames: FrameOverlay[]; markers: MarkerOverlay[]; ring: PlotDef | null; free: PlotDef[]; beacons: PlotDef[] }
 interface Pulse { plot: PlotDef; start: number; kind: 'place' | 'upgrade' }
 
 export class CityScene {
@@ -77,10 +78,11 @@ export class CityScene {
   private plotLabelMesh: Mesh;
   private labelTex: WebGLTexture;
   private labels: LabelData;
-  private frameMesh: Mesh;
+  private outlines = new Map<string, Mesh>();
+  private beaconMesh: Mesh;
   private ringMesh: Mesh;
   private pulseMesh: Mesh;
-  private previews = new Map<BuildingType, Mesh>();
+  private previews = new Map<string, Mesh>();
   private tableMesh: Mesh;
   private floorMesh: Mesh;
   private rayMesh: Mesh;
@@ -106,7 +108,7 @@ export class CityScene {
   private builtVersion = -1;
   private tableHeight = -1;
   private overlayKey = '';
-  private overlays: Overlays = { frames: [], markers: [], ring: null };
+  private overlays: Overlays = { frames: [], markers: [], ring: null, free: [], beacons: [] };
   private pulses: Pulse[] = [];
   private bannerUntil = 0;
 
@@ -120,7 +122,6 @@ export class CityScene {
   readonly inspInv = mat4();
   private tmp = mat4();
   private tmp2 = mat4();
-  private tmp3 = mat4();
   private localRay: Ray = { origin: [0, 0, 0], dir: [0, 0, 0] };
   private v3: Vec3 = [0, 0, 0];
 
@@ -141,7 +142,8 @@ export class CityScene {
     this.minorLabelMesh = r.texMesh(this.labels.minor);
     this.decals = (map.decals?.() ?? []).map((d) => ({ tex: r.createTexture(d.canvas), mesh: r.texMesh(d.data) }));
     this.plotLabelMesh = r.texMesh(new Float32Array(0));
-    this.frameMesh = r.litMesh(plotFrame().toFloat32());
+    for (const p of map.plots) this.outlines.set(p.id, r.litMesh(siteOutline(p).toFloat32()));
+    this.beaconMesh = r.litMesh(siteBeacon().toFloat32());
     this.ringMesh = r.litMesh(radiusRing(RULES.effectRadius).toFloat32());
     this.pulseMesh = r.litMesh(radiusRing(15, 1.4, 32).toFloat32());
     this.tableMesh = r.litMesh(new Float32Array(0));
@@ -170,11 +172,13 @@ export class CityScene {
     this.updateMatrices();
   }
 
-  private preview(type: BuildingType): Mesh {
-    let m = this.previews.get(type);
+  /** Preview mesh for a type on a specific site: the exact mesh the final building will use. */
+  private preview(type: BuildingType, plot: PlotDef): Mesh {
+    const key = `${type}:${plot.id}`;
+    let m = this.previews.get(key);
     if (!m) {
-      m = this.r.litMesh(cachedBuilding(type, 0).toFloat32());
-      this.previews.set(type, m);
+      m = this.r.litMesh(plotBuilding(plot, type, 1).toFloat32());
+      this.previews.set(key, m);
     }
     return m;
   }
@@ -226,7 +230,7 @@ export class CityScene {
       this.plotLabelMesh = this.r.texMesh(vacantPlotLabels(this.labels, this.map.plots, game.state.buildings), this.plotLabelMesh);
       this.life.sync(game.state, game.stats.residents);
     }
-    const key = `${game.version}`;
+    const key = `${game.version}|${game.prefs.showSites}`;
     if (key !== this.overlayKey) {
       this.overlayKey = key;
       this.overlays = computeOverlays(game, this.markers);
@@ -321,14 +325,25 @@ export class CityScene {
 
     // Overlays: only while placing or inspecting
     const ov = this.overlays;
+    // Free sites compatible with the chosen building (or all free sites when "Show buildable sites" is on)
+    const pulse = this.reducedMotion ? 0.75 : 0.55 + 0.3 * Math.sin(now / 420);
+    for (const p of ov.free) {
+      const mesh = this.outlines.get(p.id);
+      if (mesh) r.drawLit(mesh, this.modelM, { unlit: true, tint: FRAME_FREE, alpha: pulse });
+    }
+    for (const p of ov.beacons) {
+      compose(this.tmp, p.x, 0, p.z, 0);
+      multiply(this.tmp2, this.modelM, this.tmp);
+      r.drawLit(this.beaconMesh, this.tmp2, { unlit: true, alpha: 0.8 });
+    }
     for (const f of ov.frames) {
-      multiply(this.tmp2, this.modelM, plotMatrix(f.plot, this.tmp));
+      const mesh = this.outlines.get(f.plot.id);
+      if (!mesh) continue;
       if (f.scale !== 1) {
-        compose(this.tmp, 0, 0, 0, 0, f.scale);
-        multiply(this.tmp3, this.tmp2, this.tmp);
-        this.tmp2.set(this.tmp3);
-      }
-      r.drawLit(this.frameMesh, this.tmp2, { unlit: true, tint: f.tint });
+        compose(this.tmp, 0, 0.6, 0, 0, 1);
+        multiply(this.tmp2, this.modelM, this.tmp);
+        r.drawLit(mesh, this.tmp2, { unlit: true, tint: f.tint });
+      } else r.drawLit(mesh, this.modelM, { unlit: true, tint: f.tint });
     }
     if (ov.ring) {
       compose(this.tmp, ov.ring.x, 0, ov.ring.z, 0);
@@ -338,7 +353,7 @@ export class CityScene {
     const pv = game.preview();
     if (pv?.type) {
       multiply(this.tmp2, this.modelM, plotMatrix(pv.plot, this.tmp));
-      r.drawLit(this.preview(pv.type), this.tmp2, { tint: pv.ok ? TINT_OK : TINT_BAD, alpha: 0.6 });
+      r.drawLit(this.preview(pv.type, pv.plot), this.tmp2, { tint: pv.ok ? TINT_OK : TINT_BAD, alpha: 0.6 });
     }
 
     // Placement / upgrade pulses
@@ -464,8 +479,11 @@ export function defaultView(): View {
   return { anchor: { x: 0, y: 0.8, z: 0, yaw: 0 }, modelYaw: 0, modelScale: 1, mode: 'table' };
 }
 
-/** Plot containing a map-space point (plots are rotated rectangles), with a 1 m grace margin. */
+/** Site containing a map-space point: inside its boundary, or within its rectangle plus a 1 m grace margin. */
 export function plotAt(plots: readonly PlotDef[], x: number, z: number): PlotDef | null {
+  for (const p of plots) {
+    if (p.boundary && inRing(x, z, p.boundary)) return p;
+  }
   for (const p of plots) {
     const dx = x - p.x, dz = z - p.z;
     const c = Math.cos(p.angle), s = Math.sin(p.angle);
@@ -555,7 +573,18 @@ export function computeOverlays(game: Game, atlas: MarkerAtlas): Overlays {
       }
     }
   }
-  return { frames, markers, ring };
+  // Compatible free sites: highlighted while a build tool is chosen (and always when "Show buildable sites" is on).
+  const free: PlotDef[] = [];
+  const beacons: PlotDef[] = [];
+  const t = game.tool;
+  for (const p of game.map.plots) {
+    if (game.state.buildings[p.id]) continue;
+    const compatible = t === 'inspect' ? true : game.sim.fits(p.id, t);
+    if (!compatible) continue;
+    if (t !== 'inspect' || game.prefs.showSites) free.push(p);
+    if (game.prefs.showSites) beacons.push(p);
+  }
+  return { frames, markers, ring, free, beacons };
 }
 
 /** Short confetti burst over the table (CPU-updated, preallocated buffer, one draw call). */
@@ -603,4 +632,14 @@ class Confetti {
     this.mesh = this.r.litMesh(this.data, this.mesh);
     this.r.drawLit(this.mesh, anchor, { unlit: true, doubleSided: true });
   }
+}
+
+function inRing(x: number, z: number, r: number[]): boolean {
+  let inside = false;
+  const n = r.length / 2;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = r[i * 2], zi = r[i * 2 + 1], xj = r[j * 2], zj = r[j * 2 + 1];
+    if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
+  }
+  return inside;
 }

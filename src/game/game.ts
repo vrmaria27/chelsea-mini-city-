@@ -54,7 +54,7 @@ export class Game {
   onBuildEffect: ((kind: 'place' | 'upgrade', plotId: string) => void) | null = null;
   readonly plotById: Map<string, PlotDef>;
   /** Set when a saved city could not be moved onto this map automatically; nothing is saved until resolved. */
-  pendingChoice: { notice: string; unmapped: string[] } | null = null;
+  pendingChoice: { notice: string; unmapped: string[]; fromLegacy: boolean } | null = null;
   readonly mapInfo: { id: string; version: number };
   private previewCache: { key: string; value: Preview | null } = { key: '', value: null };
 
@@ -68,9 +68,10 @@ export class Game {
       sim: this.sim,
       legacyPlotMap: map.legacyPlotMap,
       legacySim: map.legacyPlotMap ? new Simulation(LEGACY_PLOTS) : undefined,
+      previousPlotMap: map.previousPlotMap,
     };
     const loaded = loadGame(store, ctx);
-    if (loaded.status === 'needs-choice') this.pendingChoice = { notice: loaded.notice, unmapped: loaded.unmapped };
+    if (loaded.status === 'needs-choice') this.pendingChoice = { notice: loaded.notice, unmapped: loaded.unmapped, fromLegacy: !!loaded.fromLegacy };
     this.state = loaded.state;
     this.prefs = loaded.prefs ?? { ...defaultPreferences(), reducedMotion: prefersReducedMotion };
     this.stats = this.sim.stats(this.state);
@@ -106,7 +107,7 @@ export class Game {
   /** Player chose to start fresh on this map; the original save stays in the backup slot. */
   startNewMapFromChoice(): void {
     this.pendingChoice = null;
-    this.say(`Started a new city on the real map. Your previous save is kept as a backup (${BACKUP_KEY}).`);
+    this.say(`Started a new city on the current map. Your previous save is kept as a backup (${BACKUP_KEY}).`);
     this.persist();
     this.changed(true);
   }
@@ -136,11 +137,35 @@ export class Game {
 
   // ---- tools & hover --------------------------------------------------------------------------
 
+  /** Free development sites, optionally only those a building type fits on (same rule as placement). */
+  freeSites(type?: BuildingType): PlotDef[] {
+    return this.map.plots.filter((p) => !this.state.buildings[p.id] && (!type || this.sim.fits(p.id, type)));
+  }
+
+  /** Short status line for the HUD / VR panel. */
+  siteSummary(): string {
+    const free = this.freeSites().length;
+    if (this.tool === 'inspect') return `${free} of ${this.map.plots.length} sites free`;
+    const fit = this.freeSites(this.tool).length;
+    return fit === free ? `${free} free sites` : `${fit} of ${free} free sites fit a ${BUILDINGS[this.tool].label.toLowerCase()}`;
+  }
+
   select(tool: Tool): void {
     if (this.tool === tool) return;
     this.tool = tool;
     if (tool === 'inspect') this.say('Inspect: point at a building to see what affects it.');
-    else this.say(`${BUILDINGS[tool].label} selected (${formatMoney(BUILDINGS[tool].cost)}). Point at an empty plot.`);
+    else {
+      const fit = this.freeSites(tool).length;
+      if (fit === 0) {
+        const free = this.freeSites().length;
+        this.say(
+          free === 0
+            ? `Every site is built on. Upgrade a building (Inspect → Upgrade) or undo your last action to free a site.`
+            : `No free site is big enough for a ${BUILDINGS[tool].label.toLowerCase()}. Try a ${tool === 'park' ? 'townhouse or shop' : 'park'}, or upgrade an existing building.`,
+          'error',
+        );
+      } else this.say(`${BUILDINGS[tool].label} selected (${formatMoney(BUILDINGS[tool].cost)}). ${fit} highlighted site${fit === 1 ? '' : 's'} fit${fit === 1 ? 's' : ''}; point at one.`);
+    }
     this.changed();
   }
 
@@ -174,6 +199,10 @@ export class Game {
     }
     const type = this.tool;
     const spec = BUILDINGS[type];
+    if (!this.sim.fits(plotId, type)) {
+      const why = plot.restrictions?.[type] ?? `A ${spec.label.toLowerCase()} does not fit here.`;
+      return { plot, type, ok: false, text: `Plot ${n}: ${why}`, details: [why, `Fits here: ${(plot.allowed ?? []).map((t) => BUILDINGS[t].label).join(', ')}`], estimate: null };
+    }
     const est = this.sim.estimatePlacement(this.state, plotId, type)!;
     const details = describeEstimate(type, est);
     const fail = this.sim.checkPlacement(this.state, plotId, type);
@@ -280,7 +309,9 @@ export class Game {
   setPref<K extends keyof Preferences>(key: K, value: Preferences[K]): void {
     this.prefs = { ...this.prefs, [key]: value };
     this.say(
-      key === 'reducedMotion' ? `Reduced motion ${value ? 'on' : 'off'}.` : `Low detail ${value ? 'on: people and traffic hidden' : 'off'}.`,
+      key === 'reducedMotion' ? `Reduced motion ${value ? 'on' : 'off'}.`
+        : key === 'lowDetail' ? `Low detail ${value ? 'on: people and traffic hidden' : 'off'}.`
+        : value ? `Showing ${this.freeSites().length} free development sites.` : 'Site highlights hidden (they still appear while a building is selected).',
     );
     this.persist();
     this.changed();

@@ -16,9 +16,11 @@ export const LEGACY_MAP_ID = 'legacy';
 export interface Preferences {
   reducedMotion: boolean;
   lowDetail: boolean;
+  /** Highlight free development sites with outlines and beacons. */
+  showSites: boolean;
 }
 
-export const defaultPreferences = (): Preferences => ({ reducedMotion: false, lowDetail: false });
+export const defaultPreferences = (): Preferences => ({ reducedMotion: false, lowDetail: false, showSites: true });
 
 /** What the loader needs to know about the map the game is running on. */
 export interface MapContext {
@@ -29,6 +31,8 @@ export interface MapContext {
   legacyPlotMap?: Record<string, string>;
   /** Simulation for the legacy map (to validate legacy saves before migrating). */
   legacySim?: Simulation;
+  /** Previous version of this map: its plot ids, and their mapping onto this version's plot ids. */
+  previousPlotMap?: Record<string, string>;
 }
 
 export type LoadResult =
@@ -43,6 +47,8 @@ export type LoadResult =
       notice: string;
       raw: string;
       unmapped: string[];
+      /** True when the save came from the legacy approximate map (so "continue on it" is meaningful). */
+      fromLegacy?: boolean;
     };
 
 export interface KeyValueStore {
@@ -61,7 +67,33 @@ const finiteNonNeg = (v: unknown): v is number => typeof v === 'number' && Numbe
 
 function parsePrefs(v: unknown): Preferences | null {
   if (!isObj(v)) return null;
-  return { reducedMotion: v.reducedMotion === true, lowDetail: v.lowDetail === true };
+  return { reducedMotion: v.reducedMotion === true, lowDetail: v.lowDetail === true, showSites: v.showSites !== false };
+}
+
+/**
+ * Deterministically moves buildings from old plot ids onto this map's plots. Each building takes its
+ * table target if that site is free and fits the type; otherwise the nearest free site that fits.
+ * Returns the moved buildings, the old→new id map used, and any building that found no site.
+ */
+function relocate(old: Record<string, Building>, table: Record<string, string>, sim: Simulation): { buildings: Record<string, Building>; used: Record<string, string>; unplaced: string[] } {
+  const buildings: Record<string, Building> = {};
+  const used: Record<string, string> = {};
+  const unplaced: string[] = [];
+  const ids = Object.keys(old).sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
+  const free = (id: string) => !buildings[id];
+  for (const id of ids) {
+    const b = old[id];
+    const target = table[id];
+    let dest: string | null = target && sim.hasPlot(target) && free(target) && sim.fits(target, b.type) ? target : null;
+    if (!dest) {
+      const anchor = target && sim.hasPlot(target) ? target : null;
+      const options = sim.plots.map((p) => p.id).filter((pid) => free(pid) && sim.fits(pid, b.type));
+      options.sort((x, y) => (anchor ? sim.distance(anchor, x) - sim.distance(anchor, y) : 0) || x.localeCompare(y, 'en', { numeric: true }));
+      dest = options[0] ?? null;
+    }
+    if (dest) { buildings[dest] = b; used[id] = dest; } else unplaced.push(id);
+  }
+  return { buildings, used, unplaced };
 }
 
 /** Parses the state block of a v1/v2/v3 save against a given map's plots. */
@@ -113,6 +145,28 @@ export function deserialize(raw: string | null, map: MapContext): LoadResult {
   const sourceMap = version === 3 && isObj(data.map) && typeof data.map.id === 'string' ? data.map.id : LEGACY_MAP_ID;
   const dropNote = (n: number) => (n ? `${n} unrecognised building entr${n === 1 ? 'y' : 'ies'} in the save were skipped or repaired.` : undefined);
 
+  const sourceVersion = version === 3 && isObj(data.map) && typeof data.map.version === 'number' ? data.map.version : 1;
+
+  // Same map, older version (e.g. new development sites): move buildings through the deterministic table.
+  if (sourceMap === map.id && sourceVersion < map.version && map.previousPlotMap) {
+    const table = map.previousPlotMap;
+    const prevIds = new Set(Object.keys(table));
+    const prevSim = { hasPlot: (id: string) => prevIds.has(id) } as unknown as Simulation;
+    const { state: old, dropped } = parseState(version, s, prevSim);
+    const { buildings, used, unplaced } = relocate(old.buildings, table, map.sim);
+    if (unplaced.length) {
+      return { status: 'needs-choice', state: createInitialState(), prefs, raw, unmapped: unplaced, notice: `${unplaced.length} building(s) could not be placed on the updated development sites.` };
+    }
+    const la = old.lastAction && used[old.lastAction.plotId] ? { ...old.lastAction, plotId: used[old.lastAction.plotId] } : null;
+    const state: GameState = { ...old, buildings, lastAction: la };
+    state.chapter = advanceChapters(old.chapter, map.sim.stats(state));
+    const n = Object.keys(buildings).length;
+    return {
+      status: 'loaded', state, prefs, migratedFrom: version, movedFromMap: `${map.id}@${sourceVersion}`,
+      notice: `The map now has new development sites. Your ${n} building${n === 1 ? '' : 's'}, money and chapters moved to the nearest new sites. A backup of your old save was kept.` + (dropped ? ' ' + dropNote(dropped) : ''),
+    };
+  }
+
   // Same map: parse directly.
   if (sourceMap === map.id) {
     const { state, dropped } = parseState(version, s, map.sim);
@@ -124,22 +178,19 @@ export function deserialize(raw: string | null, map: MapContext): LoadResult {
   // Legacy map → this map, via the deterministic plot mapping.
   if (sourceMap === LEGACY_MAP_ID && map.legacyPlotMap && map.legacySim) {
     const { state: old, dropped } = parseState(version, s, map.legacySim);
-    const unmapped = Object.keys(old.buildings).filter((id) => !map.legacyPlotMap![id] || !map.sim.hasPlot(map.legacyPlotMap![id]));
-    const targets = Object.keys(old.buildings).map((id) => map.legacyPlotMap![id]);
-    const collision = new Set(targets).size !== targets.length;
-    if (unmapped.length || collision) {
+    const { buildings, used, unplaced: unmapped } = relocate(old.buildings, map.legacyPlotMap, map.sim);
+    if (unmapped.length) {
       return {
         status: 'needs-choice',
         state: createInitialState(),
         prefs,
         raw,
         unmapped,
+        fromLegacy: true,
         notice: `${unmapped.length || 'Some'} building(s) from your saved city have no matching plot on the new map.`,
       };
     }
-    const buildings: Record<string, Building> = {};
-    for (const [id, b] of Object.entries(old.buildings)) buildings[map.legacyPlotMap[id]] = b;
-    const la = old.lastAction ? { ...old.lastAction, plotId: map.legacyPlotMap[old.lastAction.plotId] } : null;
+    const la = old.lastAction && used[old.lastAction.plotId] ? { ...old.lastAction, plotId: used[old.lastAction.plotId] } : null;
     const state: GameState = { ...old, buildings, lastAction: la };
     // Completed chapters are kept; anything newly met on the new layout is credited too.
     state.chapter = advanceChapters(old.chapter, map.sim.stats(state));

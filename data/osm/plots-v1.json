@@ -1,0 +1,149 @@
+{
+ "mapId": "chelsea-osm",
+ "mapVersion": 1,
+ "note": "Plot centres of map version 1 (used only to migrate saves).",
+ "plots": [
+  {
+   "id": "g1",
+   "x": -62.3,
+   "z": -86.6,
+   "area": "Blacklands Terrace & Bray Place"
+  },
+  {
+   "id": "g2",
+   "x": -57.9,
+   "z": -54.2,
+   "area": "Blacklands Terrace & Bray Place"
+  },
+  {
+   "id": "g3",
+   "x": -47.6,
+   "z": -34,
+   "area": "Blacklands Terrace & Bray Place"
+  },
+  {
+   "id": "g4",
+   "x": -80.3,
+   "z": -26.2,
+   "area": "Blacklands Terrace & Bray Place"
+  },
+  {
+   "id": "g5",
+   "x": -118.3,
+   "z": -24.6,
+   "area": "Blacklands Terrace & Bray Place"
+  },
+  {
+   "id": "g6",
+   "x": -97.7,
+   "z": -2.4,
+   "area": "Blacklands Terrace & Bray Place"
+  },
+  {
+   "id": "g7",
+   "x": -44.6,
+   "z": -326.8,
+   "area": "Cadogan Gardens"
+  },
+  {
+   "id": "g8",
+   "x": -4.8,
+   "z": -302.9,
+   "area": "Cadogan Gardens"
+  },
+  {
+   "id": "g9",
+   "x": -29.4,
+   "z": -298.8,
+   "area": "Cadogan Gardens"
+  },
+  {
+   "id": "g10",
+   "x": -89.9,
+   "z": -295.2,
+   "area": "Cadogan Gardens"
+  },
+  {
+   "id": "g11",
+   "x": -69.5,
+   "z": -293.2,
+   "area": "Cadogan Gardens"
+  },
+  {
+   "id": "g12",
+   "x": 0,
+   "z": -274.3,
+   "area": "Cadogan Gardens"
+  },
+  {
+   "id": "g13",
+   "x": -24.7,
+   "z": -270.2,
+   "area": "Cadogan Gardens"
+  },
+  {
+   "id": "g14",
+   "x": -51.4,
+   "z": -237.7,
+   "area": "Cadogan Gardens"
+  },
+  {
+   "id": "g15",
+   "x": -42,
+   "z": -214.6,
+   "area": "Cadogan Gardens"
+  },
+  {
+   "id": "g16",
+   "x": -145.9,
+   "z": 64.7,
+   "area": "King's Road & Royal Avenue"
+  },
+  {
+   "id": "g17",
+   "x": -109.7,
+   "z": 83.9,
+   "area": "King's Road & Royal Avenue"
+  },
+  {
+   "id": "g18",
+   "x": -170.7,
+   "z": 93,
+   "area": "King's Road & Royal Avenue"
+  },
+  {
+   "id": "g19",
+   "x": -140.3,
+   "z": 111.3,
+   "area": "King's Road & Royal Avenue"
+  },
+  {
+   "id": "g20",
+   "x": -131.5,
+   "z": 136.1,
+   "area": "King's Road & Royal Avenue"
+  }
+ ],
+ "legacyPlotMap": {
+  "p3": "g4",
+  "p4": "g2",
+  "p1": "g3",
+  "p2": "g6",
+  "p5": "g5",
+  "p6": "g1",
+  "p11": "g13",
+  "p10": "g9",
+  "p12": "g11",
+  "p8": "g12",
+  "p14": "g8",
+  "p7": "g14",
+  "p9": "g7",
+  "p13": "g10",
+  "p15": "g15",
+  "p18": "g19",
+  "p19": "g18",
+  "p16": "g17",
+  "p17": "g16",
+  "p20": "g20"
+ }
+}

@@ -30,14 +30,14 @@ test('round-trips state (with upgrades, chapter and preferences) through the v2 
   s = ok(sim.upgrade(s, 'p3'));
   s = sim.tick(s);
   const store = new MemoryStore();
-  assert.equal(saveGame(store, s, { reducedMotion: true, lowDetail: false }, { id: 'legacy', version: 1 }), true);
+  assert.equal(saveGame(store, s, { reducedMotion: true, lowDetail: false, showSites: true }, { id: 'legacy', version: 1 }), true);
   const raw = JSON.parse(store.getItem(SAVE_KEY)!);
   assert.equal(raw.version, SAVE_VERSION);
   assert.equal(SAVE_VERSION, 3);
   const loaded = loadGame(store, legacyCtx);
   assert.equal(loaded.status, 'loaded');
   assert.deepEqual(loaded.state, s);
-  assert.deepEqual(loaded.prefs, { reducedMotion: true, lowDetail: false });
+  assert.deepEqual(loaded.prefs, { reducedMotion: true, lowDetail: false, showSites: true });
   assert.equal(loaded.state.lastAction?.kind, 'upgrade');
 });
 

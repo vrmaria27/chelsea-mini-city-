@@ -59,7 +59,7 @@ export interface Stats {
   income: Record<string, number>;
 }
 
-export type Failure = { ok: false; reason: 'occupied' | 'unaffordable' | 'unknown-plot' | 'vacant' | 'max-level'; message: string };
+export type Failure = { ok: false; reason: 'occupied' | 'unaffordable' | 'unknown-plot' | 'vacant' | 'max-level' | 'does-not-fit'; message: string };
 export type PlaceResult = { ok: true; state: GameState } | Failure;
 export type UndoResult = { ok: true; state: GameState; undone: LastAction } | { ok: false; message: string };
 
@@ -137,6 +137,12 @@ export class Simulation {
     return d;
   }
 
+  /** Whether a building type physically fits on a plot (same rule for preview, input and placement). */
+  fits(plotId: string, type: BuildingType): boolean {
+    const p = this.byId.get(plotId);
+    return !!p && (!p.allowed || p.allowed.includes(type));
+  }
+
   inRange(a: string, b: string): boolean {
     return this.distance(a, b) <= RULES.effectRadius;
   }
@@ -147,6 +153,10 @@ export class Simulation {
   checkPlacement(state: GameState, plotId: string, type: BuildingType): Failure | null {
     if (!this.byId.has(plotId)) return { ok: false, reason: 'unknown-plot', message: 'That is not a development plot.' };
     if (state.buildings[plotId]) return { ok: false, reason: 'occupied', message: 'That plot is already built on.' };
+    if (!this.fits(plotId, type)) {
+      const why = this.byId.get(plotId)!.restrictions?.[type];
+      return { ok: false, reason: 'does-not-fit', message: why ?? `A ${BUILDINGS[type].label.toLowerCase()} does not fit on this site.` };
+    }
     const cost = BUILDINGS[type].cost;
     if (state.money < cost) return { ok: false, reason: 'unaffordable', message: `Not enough money: need ${gbp(cost - state.money)} more.` };
     return null;
@@ -311,7 +321,7 @@ export class Simulation {
 
   /** Effects of placing `type` on a vacant plot, ignoring affordability. */
   estimatePlacement(state: GameState, plotId: string, type: BuildingType): Estimate | null {
-    if (!this.byId.has(plotId) || state.buildings[plotId]) return null;
+    if (!this.byId.has(plotId) || state.buildings[plotId] || !this.fits(plotId, type)) return null;
     const after: GameState = { ...state, buildings: { ...state.buildings, [plotId]: { type, level: 1 } } };
     return this.diff(this.stats(state), this.stats(after));
   }

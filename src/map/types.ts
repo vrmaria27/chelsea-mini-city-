@@ -14,6 +14,14 @@ export interface PlotDef {
   angle: number;
   area: string;
   street?: string | null;
+  /** Site boundary (map metres, flat x,z) — the cleared footprint. Absent on the legacy map (rectangle). */
+  boundary?: number[];
+  /** Triangulated boundary for the site ground (flat x,z triples). */
+  boundaryTris?: number[];
+  /** Building types that physically fit; absent = all. */
+  allowed?: ('townhouse' | 'shop' | 'park')[];
+  /** Why a type does not fit (shown before purchase). */
+  restrictions?: Partial<Record<'townhouse' | 'shop' | 'park', string>>;
 }
 
 /** Flat label in map space (one quad). */
@@ -59,4 +67,6 @@ export interface GameMap {
   decals?: () => { canvas: HTMLCanvasElement; data: Float32Array }[];
   /** Old plot id → this map's plot id (for migrating saves from the legacy map). */
   legacyPlotMap?: Record<string, string>;
+  /** Plot ids of the previous version of this map → current ids (for migrating saves). */
+  previousPlotMap?: Record<string, string>;
 }

@@ -8,12 +8,13 @@ import {
   simplify, simplifyRing, triangulate, trisArea,
 } from './geo.mjs';
 
-const inFile = process.argv[2] ?? 'data/osm/raw.json';
-const outFile = process.argv[3] ?? 'src/map/osm/chelsea-osm.json';
+const positional = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+const inFile = positional[0] ?? 'data/osm/raw.json';
+const outFile = positional[1] ?? 'src/map/osm/chelsea-osm.json';
 
 // ---- Map definition -------------------------------------------------------------------------
 export const MAP_ID = 'chelsea-osm';
-export const MAP_VERSION = 1;
+export const MAP_VERSION = 2;
 const CENTRE = { lat: 51.4912, lon: -0.16 }; // between Duke of York Square and King's Road west
 const HALF = 350; // metres: a 700 m × 700 m square
 const BOX = { x0: -HALF, z0: -HALF, x1: HALF, z1: HALF };
@@ -354,129 +355,253 @@ for (const [name, rs] of byName) {
   for (const c of chosen) labels.push({ text: name, x: round1(c.x), z: round1(c.z), angle: +c.angle.toFixed(4), maxLen: round1(c.maxLen), cls });
 }
 
-// ---- Development plots ----------------------------------------------------------------------
-// Fictional redevelopment sites fitted to real frontages. A candidate is a rectangle beside a
-// street, facing it, clear of every road/footpath buffer, green space, plaza and protected
-// landmark. Decorative footprints it covers are listed in `replaces` and hidden in game.
-const PLOT_W = 20, PLOT_D = 16, SETBACK = 3; // metres
-const roadGrid = new Grid(30);
-roads.forEach((r, ri) => {
-  for (let i = 0; i + 3 < r.pts.length; i += 2) {
-    const s = { a: [r.pts[i], r.pts[i + 1]], b: [r.pts[i + 2], r.pts[i + 3]], half: r.w / 2, ri };
-    roadGrid.insert(s, Math.min(s.a[0], s.b[0]) - 10, Math.min(s.a[1], s.b[1]) - 10, Math.max(s.a[0], s.b[0]) + 10, Math.max(s.a[1], s.b[1]) + 10);
-  }
-});
-const bGrid = new Grid(30);
-buildings.forEach((b) => {
-  const r = b.rings[0];
-  const xs = r.filter((_, i) => i % 2 === 0), zs = r.filter((_, i) => i % 2 === 1);
-  b.poly = []; for (let i = 0; i < r.length; i += 2) b.poly.push([r[i], r[i + 1]]);
-  bGrid.insert(b, Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs));
-});
-const blocked = areas.filter((a) => a.kind !== 'parking').map((a) => { const p = []; for (let i = 0; i < a.ring.length; i += 2) p.push([a.ring[i], a.ring[i + 1]]); return p; });
-
+// ---- Development sites (map version 2) ---------------------------------------------------------
+// Fictional redevelopment sites made from selected ordinary building footprints. The selection is a
+// deliberate, versioned list (data/osm/sites-v2.json), so the same map version always yields the same
+// sites. `node scripts/osm/process.mjs --propose` regenerates a proposal from the rules below.
+const SITES_FILE = 'data/osm/sites-v2.json';
+const SITE_TYPES = new Set(['house', 'terrace', 'residential', 'yes', 'apartments', 'semidetached_house', 'retail', 'commercial']);
+const FIT = { townhouse: { w: 6, d: 6 }, shop: { w: 7, d: 6 }, park: { w: 8, d: 8 } };
+const streets = roads.filter((r) => r.cls === 'street' || r.cls === 'main');
+const streetSegs = streets.flatMap((r) => { const o = []; for (let i = 0; i + 3 < r.pts.length; i += 2) o.push({ a: [r.pts[i], r.pts[i + 1]], b: [r.pts[i + 2], r.pts[i + 3]], half: r.w / 2, name: r.name }); return o; });
+const pathSegs = roads.filter((r) => r.cls === 'path').flatMap((r) => { const o = []; for (let i = 0; i + 3 < r.pts.length; i += 2) o.push({ a: [r.pts[i], r.pts[i + 1]], b: [r.pts[i + 2], r.pts[i + 3]], half: r.w / 2 }); return o; });
 function rectPoly(cx, cz, angle, w, d) {
-  // local x along frontage, local z toward the street (front)
-  const c = Math.cos(angle), s = Math.sin(angle);
-  return [[-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, d / 2], [-w / 2, d / 2]].map(([x, z]) => [cx + x * c + z * s, cz - x * s + z * c]);
+  const c = Math.cos(angle), sn = Math.sin(angle);
+  return [[-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, d / 2], [-w / 2, d / 2]].map(([x, z]) => [cx + x * c + z * sn, cz - x * sn + z * c]);
+}
+const allSegs = roads.filter((r) => r.cls !== 'path').flatMap((r) => { const o = []; for (let i = 0; i + 3 < r.pts.length; i += 2) o.push({ a: [r.pts[i], r.pts[i + 1]], b: [r.pts[i + 2], r.pts[i + 3]], half: r.w / 2 }); return o; });
+const segD = (p, a, b) => { const dx = b[0] - a[0], dz = b[1] - a[1], l = dx * dx + dz * dz || 1; const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / l)); return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dz); };
+const blockedAreas = areas.filter((a) => a.kind !== 'parking').map((a) => { const q = []; for (let i = 0; i < a.ring.length; i += 2) q.push([a.ring[i], a.ring[i + 1]]); return q; });
+
+/** Analyse one footprint as a potential site: street frontage, oriented inscribed rectangle, fit. */
+function analyseSite(b) {
+  const r = b.rings[0];
+  const poly = []; for (let i = 0; i < r.length; i += 2) poly.push([r[i], r[i + 1]]);
+  const A = Math.abs(ringArea(poly));
+  // frontage edge: the longest edge that runs parallel to, and close beside, a street
+  let best = null;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], c = poly[(i + 1) % poly.length];
+    const len = Math.hypot(c[0] - a[0], c[1] - a[1]);
+    if (len < 5) continue;
+    const mid = [(a[0] + c[0]) / 2, (a[1] + c[1]) / 2];
+    for (const sg of streetSegs) {
+      const gap = segD(mid, sg.a, sg.b) - sg.half;
+      if (gap > 12 || gap < -0.5) continue;
+      const ang = Math.abs(Math.atan2(c[1] - a[1], c[0] - a[0]) - Math.atan2(sg.b[1] - sg.a[1], sg.b[0] - sg.a[0])) % Math.PI;
+      const par = Math.min(ang, Math.PI - ang);
+      if (par > 0.35) continue;
+      // Thin sites have both long edges near a street; prefer the edge that actually touches it.
+      const score = len - 2 * Math.max(0, gap);
+      if (!best || score > best.score) best = { a, c, len, street: sg.name, mid, score };
+    }
+  }
+  if (!best) return null;
+  const ux = (best.c[0] - best.a[0]) / best.len, uz = (best.c[1] - best.a[1]) / best.len;
+  // local frame: u along frontage, v away from the street (into the plot)
+  const cen = poly.reduce((s2, p) => [s2[0] + p[0] / poly.length, s2[1] + p[1] / poly.length], [0, 0]);
+  let vx = -uz, vz = ux;
+  if ((cen[0] - best.mid[0]) * vx + (cen[1] - best.mid[1]) * vz < 0) { vx = -vx; vz = -vz; }
+  const U = poly.map((p) => (p[0] - cen[0]) * ux + (p[1] - cen[1]) * uz), V = poly.map((p) => (p[0] - cen[0]) * vx + (p[1] - cen[1]) * vz);
+  let [u0, u1, v0, v1] = [Math.min(...U), Math.max(...U), Math.min(...V), Math.max(...V)];
+  const rectA = (u1 - u0) * (v1 - v0);
+  const rectangularity = A / rectA;
+  // shrink the oriented box until it lies inside the footprint (with a 0.5 m margin)
+  const toWorld = (u, v) => [cen[0] + ux * u + vx * v, cen[1] + uz * u + vz * v];
+  const inside = (q) => pointInPolygon(q, poly);
+  let m = 0.5, ok = false;
+  for (let k = 0; k < 40; k++) {
+    const corners = [[u0 + m, v0 + m], [u1 - m, v0 + m], [u1 - m, v1 - m], [u0 + m, v1 - m]].map(([u, v]) => toWorld(u, v));
+    const mids = [[(u0 + u1) / 2, v0 + m], [(u0 + u1) / 2, v1 - m], [u0 + m, (v0 + v1) / 2], [u1 - m, (v0 + v1) / 2]].map(([u, v]) => toWorld(u, v));
+    if ([...corners, ...mids].every(inside)) { ok = true; break; }
+    m += 0.4;
+  }
+  if (!ok) return null;
+  const w = u1 - u0 - 2 * m, d = v1 - v0 - 2 * m;
+  const cu = (u0 + u1) / 2, cv = (v0 + v1) / 2;
+  const [cx, cz] = toWorld(cu, cv);
+  // front (local +z) faces the street: direction −v
+  const angle = Math.atan2(-vx, -vz);
+  return { poly, A, rectangularity, w, d, cx, cz, angle, street: best.street };
 }
 
-const candidates = [];
-for (const r of roads) {
-  if (!['street', 'main'].includes(r.cls)) continue;
-  for (let i = 0; i + 3 < r.pts.length; i += 2) {
-    const ax = r.pts[i], az = r.pts[i + 1], bx = r.pts[i + 2], bz = r.pts[i + 3];
-    const len = Math.hypot(bx - ax, bz - az);
-    if (len < PLOT_W) continue;
-    const ux = (bx - ax) / len, uz = (bz - az) / len;
-    for (let t = PLOT_W / 2; t <= len - PLOT_W / 2; t += 5) {
-      const px = ax + ux * t, pz = az + uz * t;
-      for (const side of [1, -1]) {
-        const nx = -uz * side, nz = ux * side; // unit normal away from the road
-        const off = r.w / 2 + SETBACK + PLOT_D / 2;
-        const cx = px + nx * off, cz = pz + nz * off;
-        // front (local +z) faces the street: direction (-nx, -nz) = (sin a, cos a)
-        const angle = Math.atan2(-nx, -nz);
-        candidates.push({ cx, cz, angle, road: r, poly: rectPoly(cx, cz, angle, PLOT_W, PLOT_D) });
+// Footprints attached to a protected landmark are never used (keeps landmark settings intact).
+const protectedPolys = buildings.filter((b) => b.protected).map((b) => { const r = b.rings[0], q = []; for (let i = 0; i < r.length; i += 2) q.push([r[i], r[i + 1]]); return q; });
+const touchesProtected = (poly) => protectedPolys.some((q) => q.some((a) => poly.some((c) => Math.hypot(a[0] - c[0], a[1] - c[1]) < 1.5)) || polygonsOverlap(poly, q));
+const bGridSites = new Grid(30);
+for (const b of buildings) {
+  const r = b.rings[0], poly = []; for (let i = 0; i < r.length; i += 2) poly.push([r[i], r[i + 1]]);
+  const xs = poly.map((p) => p[0]), zs = poly.map((p) => p[1]);
+  bGridSites.insert({ id: b.id, poly }, Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs));
+}
+const ordinary = (b) => !b.protected && !b.name && SITE_TYPES.has(b.type) && b.rings.length === 1;
+function siteValid(b, s2) {
+  if (!s2 || (b.members ? !b.members.every(ordinary) : !ordinary(b))) return false;
+  if (s2.A < 140 || s2.A > 1000 || s2.rectangularity < 0.72 || s2.w < FIT.townhouse.w || s2.d < FIT.townhouse.d || s2.w > 40) return false;
+  if (touchesProtected(s2.poly)) return false;
+  // No other (non-member) building may intrude into the site: sample its interior on a 1 m grid.
+  const own = new Set(b.members ? b.members.map((m) => m.id) : [b.id]);
+  const xs = s2.poly.map((p) => p[0]), zs = s2.poly.map((p) => p[1]);
+  const nearby = bGridSites.query(Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)).filter((o) => !own.has(o.id));
+  for (let x = Math.min(...xs) + 0.5; x < Math.max(...xs); x += 1)
+    for (let z = Math.min(...zs) + 0.5; z < Math.max(...zs); z += 1) {
+      if (!pointInPolygon([x, z], s2.poly)) continue;
+      if (nearby.some((o) => pointInPolygon([x, z], o.poly))) return false;
+    }
+  if (s2.poly.some(([x, z]) => Math.abs(x) > HALF - 12 || Math.abs(z) > HALF - 12)) return false;
+  for (const ba of blockedAreas) if (polygonsOverlap(s2.poly, ba)) return false;
+  // footprint must not sit on any road or footpath centreline buffer (OSM occasionally overlaps them)
+  for (const sg of allSegs) if (polySegDist(s2.poly, sg.a, sg.b) < sg.half * 0.5) return false;
+  // pedestrian routes: the site's building rectangle must stay fully clear of every footway buffer
+  const rp = rectPoly(s2.cx, s2.cz, s2.angle, s2.w, s2.d);
+  for (const sg of pathSegs) if (polySegDist(rp, sg.a, sg.b) < sg.half) return false;
+  for (const sg of allSegs) if (polySegDist(rp, sg.a, sg.b) < sg.half) return false; // drawn carriageway (estimated width)
+  return true;
+}
+
+const siteCandidates = [];
+for (const b of buildings) {
+  const s2 = analyseSite(b);
+  if (siteValid(b, s2)) siteCandidates.push({ b, ...s2 });
+}
+const groupStats = { tried: 0, ok: 0 };
+// Groups of 2–4 adjacent small footprints (terraced houses sharing party walls) on one frontage.
+// Boundary = convex hull of the group, accepted only when the hull is almost exactly their union.
+function hull(pts) {
+  const P2 = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], hi = [];
+  for (const p of P2) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+  for (const p of P2.reverse()) { while (hi.length >= 2 && cr(hi[hi.length - 2], hi[hi.length - 1], p) <= 0) hi.pop(); hi.push(p); }
+  return [...lo.slice(0, -1), ...hi.slice(0, -1)];
+}
+{
+  const small = buildings.filter((b) => ordinary(b)).map((b) => {
+    const r = b.rings[0], poly = []; for (let i = 0; i < r.length; i += 2) poly.push([r[i], r[i + 1]]);
+    return { b, poly, A: Math.abs(ringArea(poly)) };
+  }).filter((x) => x.A >= 35 && x.A < 320);
+  const shareEdge = (p, q) => { let n = 0; for (const a of p) if (q.some((c) => Math.hypot(a[0] - c[0], a[1] - c[1]) < 0.35)) n++; return n >= 2; };
+  const seen = new Set();
+  for (const seed of small) {
+    let group = [seed];
+    for (let step = 0; step < 3; step++) {
+      const next = small.find((x) => !group.includes(x) && group.some((g) => shareEdge(g.poly, x.poly)));
+      if (!next) break;
+      group = [...group, next];
+      const H = hull(group.flatMap((g) => g.poly));
+      const sum = group.reduce((n, g) => n + g.A, 0);
+      if (Math.abs(ringArea(H)) > sum * 1.1) { group.pop(); break; }
+      if (sum >= 180 && group.length >= 2) {
+        const key = group.map((g) => g.b.id).sort().join('+');
+        if (seen.has(key)) break;
+        seen.add(key);
+        const pseudo = { id: key, rings: [H.flatMap((p) => [p[0], p[1]])], members: group.map((g) => g.b), type: 'terrace' };
+        const s2 = analyseSite(pseudo);
+        groupStats.tried++;
+        if (siteValid(pseudo, s2)) { siteCandidates.push({ b: pseudo, ...s2 }); groupStats.ok++; }
+        if (sum >= 260) break;
       }
     }
   }
 }
-function validCandidate(c) {
-  const xs = c.poly.map((p) => p[0]), zs = c.poly.map((p) => p[1]);
-  const [mnx, mnz, mxx, mxz] = [Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)];
-  if (mnx < -HALF + 8 || mxx > HALF - 8 || mnz < -HALF + 8 || mxz > HALF - 8) return false;
-  for (const s of roadGrid.query(mnx, mnz, mxx, mxz)) if (polySegDist(c.poly, s.a, s.b) < s.half + 0.8) return false;
-  for (const b of blocked) if (polygonsOverlap(c.poly, b)) return false;
-  const hits = bGrid.query(mnx, mnz, mxx, mxz).filter((b) => polygonsOverlap(c.poly, b.poly));
-  if (hits.some((b) => b.protected || b.area > 1400)) return false;
-  const covered = hits.reduce((n, b) => n + b.area, 0);
-  if (covered > PLOT_W * PLOT_D * 3) return false;
-  c.replaces = hits.map((b) => b.id);
-  return true;
-}
-const valid = candidates.filter(validCandidate);
-if (process.env.DUMP_CANDIDATES) writeFileSync(process.env.DUMP_CANDIDATES, JSON.stringify(valid.map((c) => [round1(c.cx), round1(c.cz)])));
 
-// Four neighbourhood clusters seeded at real places; plots are the nearest valid,
-// non-overlapping candidates. Cluster sizes mirror the legacy map (6 / 9 / 5) so old saves map 1:1.
-// Seeds are in map metres (x east, z south of the centre), chosen on real streets after
-// inspecting the extract (see the debug plot in README "Map data").
-const CLUSTERS = [
-  { key: 'blacklands', label: 'Blacklands Terrace & Bray Place', size: 6, seed: [-95, -35], legacy: ['p1', 'p2', 'p3', 'p4', 'p5', 'p6'] },
-  { key: 'cadogan', label: 'Cadogan Gardens', size: 9, seed: [-25, -280], legacy: ['p7', 'p8', 'p9', 'p10', 'p11', 'p12', 'p13', 'p14', 'p15'] },
-  { key: 'kingsroad', label: "King's Road & Royal Avenue", size: 5, seed: [-140, 115], legacy: ['p16', 'p17', 'p18', 'p19', 'p20'] },
+// Proposal: compact neighbourhood clusters seeded on real streets (map metres), spread over the map.
+const SITE_CLUSTERS = [
+  { key: 'blacklands', label: 'Blacklands Terrace', size: 6, seed: [-80, -40] },
+  { key: 'cadogan', label: 'Cadogan Gardens', size: 8, seed: [-10, -275], compact: 135 },
+  { key: 'royal-avenue', label: "King's Road & Royal Avenue", size: 5, seed: [-160, 110] },
+  { key: 'lower-sloane', label: 'Holbein Place & Mews', size: 7, seed: [280, 62], compact: 100 },
+  { key: 'markham', label: 'Markham Square & Bywater Street', size: 3, seed: [-285, 30] },
+  { key: 'draycott', label: 'Draycott Avenue', size: 3, seed: [-215, -150] },
 ];
+// Grouped sites are listed by all their member footprints.
+if (process.argv.includes('--propose')) {
+  const chosen = [];
+  const near = (c, q) => Math.hypot(c.cx - q.cx, c.cz - q.cz);
+  for (const cl of SITE_CLUSTERS) {
+    const pool = siteCandidates.filter((c) => !chosen.some((x) => x.c === c)).map((c) => ({ c, d: Math.hypot(c.cx - cl.seed[0], c.cz - cl.seed[1]) })).filter((x) => x.d < (cl.pool ?? 135)).sort((a, b) => a.d - b.d);
+    const picked = [];
+    for (const { c } of pool) {
+      if (picked.length >= cl.size) break;
+      if (picked.some((q) => near(c, q) > (cl.compact ?? 125))) continue; // compact: within reach of shops/parks
+      const ids = (x) => (x.b.members ? x.b.members.map((m) => m.id) : [x.b.id]);
+      if ([...picked, ...chosen.map((x) => x.c)].some((q) => ids(q).some((id) => ids(c).includes(id)) || polygonsOverlap(q.poly, c.poly))) continue;
+      if (picked.some((q) => near(c, q) < 9)) continue; // not two halves of one terrace
+      picked.push(c);
+    }
+    if (picked.length < cl.size) report.warnings.push(`site cluster ${cl.key}: ${picked.length}/${cl.size}`);
+    for (const c of picked) chosen.push({ c, cl });
+  }
+  const list = {
+    mapVersion: 2,
+    note: 'Curated fictional development sites (OSM building footprints cleared for gameplay). Edit deliberately; bump the map version when changing.',
+    sites: chosen.map(({ c, cl }) => ({ osm: c.b.members ? c.b.members.map((m) => m.id) : [c.b.id], cluster: cl.key, area: cl.label, street: c.street })),
+  };
+  writeFileSync(SITES_FILE, JSON.stringify(list, null, 1));
+  console.log(`Proposed ${list.sites.length} sites from ${siteCandidates.length} candidates → ${SITES_FILE}`);
+}
+if (process.env.SITE_DEBUG) console.log('groups', JSON.stringify(groupStats));
+if (process.env.WHY) {
+  const [wx, wz] = process.env.WHY.split(',').map(Number);
+  const reasons = {};
+  for (const b of buildings) {
+    const r = b.rings[0]; let cx = 0, cz = 0; for (let i = 0; i < r.length; i += 2) { cx += r[i]; cz += r[i + 1]; } cx /= r.length / 2; cz /= r.length / 2;
+    if (Math.hypot(cx - wx, cz - wz) > 90) continue;
+    let why;
+    if (!ordinary(b)) why = `not ordinary (${b.type}${b.name ? ', named' : ''}${b.protected ? ', protected' : ''})`;
+    else {
+      const s2 = analyseSite(b);
+      if (!s2) why = 'no street frontage / rect';
+      else if (s2.A < 140) why = 'area < 140'; else if (s2.A > 1000) why = 'area > 1000';
+      else if (s2.rectangularity < 0.72) why = 'not rectangular'; else if (s2.w < 6 || s2.d < 8) why = `too small rect ${s2.w.toFixed(1)}x${s2.d.toFixed(1)}`;
+      else if (s2.w > 30) why = 'frontage > 30'; else if (touchesProtected(s2.poly)) why = 'touches protected';
+      else if (!siteValid(b, s2)) why = 'blocked (road/park/edge)'; else why = 'OK';
+    }
+    reasons[why] = (reasons[why] ?? 0) + 1;
+  }
+  console.log('WHY', JSON.stringify(reasons));
+}
+if (process.env.DUMP_CANDIDATES) writeFileSync(process.env.DUMP_CANDIDATES, JSON.stringify(siteCandidates.map((c) => [round1(c.cx), round1(c.cz)])));
+
+const siteList = JSON.parse(readFileSync(SITES_FILE, 'utf8'));
 const plots = [];
-const plotPolys = [];
-const free = (c) => !plotPolys.some((p) => polygonsOverlap(c.poly, p) || p.some((q) => Math.min(...c.poly.map((r) => Math.hypot(r[0] - q[0], r[1] - q[1]))) < 3));
-for (const cl of CLUSTERS) {
-  const [sx, sz] = cl.seed;
-  const pool = valid
-    .map((c) => ({ c, d: Math.hypot(c.cx - sx, c.cz - sz) }))
-    .filter((x) => x.d < 95)
-    .sort((a, b) => a.d - b.d || a.c.cx - b.c.cx);
-  const picked = [];
-  for (const { c } of pool) {
-    if (picked.length >= cl.size) break;
-    if (!free(c)) continue;
-    // keep the cluster compact: every plot within 140 m of the others
-    if (picked.some((p) => Math.hypot(p.cx - c.cx, p.cz - c.cz) > 140)) continue;
-    picked.push(c);
-    plotPolys.push(c.poly);
+siteList.sites.forEach((entry, i) => {
+  const members = entry.osm.map((id) => buildings.find((x) => x.id === id));
+  if (members.some((m) => !m)) { report.warnings.push(`site ${entry.osm} missing from data`); return; }
+  const b = members.length === 1 ? members[0] : { id: entry.osm.join('+'), rings: [hull(members.flatMap((m) => { const r = m.rings[0], q = []; for (let k = 0; k < r.length; k += 2) q.push([r[k], r[k + 1]]); return q; })).flatMap((p) => [p[0], p[1]])], members, type: 'terrace' };
+  const s2 = analyseSite(b);
+  if (!siteValid(b, s2)) { report.warnings.push(`site ${entry.osm} no longer valid`); return; }
+  const allowed = Object.entries(FIT).filter(([, f]) => s2.w >= f.w && s2.d >= f.d).map(([t]) => t);
+  const restrictions = {};
+  for (const [t, f] of Object.entries(FIT)) if (!allowed.includes(t)) restrictions[t] = `Too small for a ${t}: needs ${f.w} × ${f.d} m (site is ${s2.w.toFixed(0)} × ${s2.d.toFixed(0)} m).`;
+  plots.push({
+    id: `k${String(i + 1).padStart(2, '0')}`,
+    number: i + 1,
+    x: round1(s2.cx), z: round1(s2.cz),
+    w: Math.round(s2.w * 10) / 10, d: Math.round(s2.d * 10) / 10,
+    angle: +s2.angle.toFixed(4),
+    area: entry.area,
+    street: s2.street ?? null,
+    boundary: s2.poly.flatMap((p) => [round1(p[0]), round1(p[1])]),
+    boundaryTris: triangulate(s2.poly).map(round1),
+    allowed,
+    restrictions,
+    replaces: entry.osm,
+  });
+});
+
+// Save migration tables (deterministic): map v1 plot → v2 site (nearest unused, by v1 order), and
+// legacy plot → v2 site via v1.
+const v1 = JSON.parse(readFileSync('data/osm/plots-v1.json', 'utf8'));
+const previousPlotMap = {};
+{
+  const used = new Set();
+  for (const o of v1.plots) {
+    const cand = plots.filter((p) => !used.has(p.id)).map((p) => ({ p, d: Math.hypot(p.x - o.x, p.z - o.z) })).sort((a, b) => a.d - b.d || a.p.id.localeCompare(b.p.id))[0];
+    if (cand) { previousPlotMap[o.id] = cand.p.id; used.add(cand.p.id); }
   }
-  if (picked.length < cl.size) report.warnings.push(`cluster ${cl.key}: only ${picked.length}/${cl.size} plots`);
-  cl.picked = picked;
 }
-// Number plots west→east within clusters for readability; ids are stable "g1".."g20".
-let n = 0;
-const legacyPlotMap = {};
-for (const cl of CLUSTERS) {
-  const cx = cl.picked.reduce((s, p) => s + p.cx, 0) / cl.picked.length, cz = cl.picked.reduce((s, p) => s + p.cz, 0) / cl.picked.length;
-  const sorted = [...cl.picked].sort((a, b) => Math.hypot(a.cx - cx, a.cz - cz) - Math.hypot(b.cx - cx, b.cz - cz));
-  cl.ordered = sorted;
-  for (const c of [...cl.picked].sort((a, b) => a.cz - b.cz || a.cx - b.cx)) {
-    n++;
-    c.id = `g${n}`;
-    plots.push({
-      id: c.id, number: n, x: round1(c.cx), z: round1(c.cz), w: PLOT_W, d: PLOT_D, angle: +c.angle.toFixed(4),
-      area: cl.label, street: c.road.name ?? null, replaces: c.replaces,
-    });
-  }
-}
-// Legacy mapping: the legacy cluster centre (p4 / p11 / p18 — the plot nearest the others) maps
-// to the new plot nearest the new cluster centre, and so on outward, by legacy distance rank.
-const LEGACY_POS = {
-  p1: [-95, -150], p2: [-55, -150], p3: [-95, -110], p4: [-55, -110], p5: [-95, -70], p6: [-55, -70],
-  p7: [-5, -150], p8: [35, -150], p9: [75, -150], p10: [-5, -105], p11: [35, -105], p12: [75, -105], p13: [-5, -60], p14: [35, -60], p15: [75, -60],
-  p16: [-55, 25], p17: [5, 25], p18: [-55, 70], p19: [5, 70], p20: [-55, 115],
-};
-for (const cl of CLUSTERS) {
-  const lc = cl.legacy.map((id) => LEGACY_POS[id]);
-  const mx = lc.reduce((s, p) => s + p[0], 0) / lc.length, mz = lc.reduce((s, p) => s + p[1], 0) / lc.length;
-  const legacyRanked = [...cl.legacy].sort((a, b) => Math.hypot(LEGACY_POS[a][0] - mx, LEGACY_POS[a][1] - mz) - Math.hypot(LEGACY_POS[b][0] - mx, LEGACY_POS[b][1] - mz) || a.localeCompare(b, 'en', { numeric: true }));
-  legacyRanked.forEach((old, i) => { if (cl.ordered[i]) legacyPlotMap[old] = cl.ordered[i].id; });
-}
+const legacyPlotMap = Object.fromEntries(Object.entries(v1.legacyPlotMap).map(([old, g]) => [old, previousPlotMap[g]]).filter(([, k]) => k));
 
 // ---- Decorative life paths ------------------------------------------------------------------
 // Pedestrians: OSM sidewalks and footways near the clusters (they already avoid buildings).
@@ -544,7 +669,7 @@ const orient = {
   'Burton Court is the southernmost landmark': landmarks.every((l) => l.z <= lm['Burton Court']?.z),
   'Royal Avenue is west of the Saatchi Gallery': lm['Royal Avenue']?.x < lm['Saatchi Gallery']?.x,
 };
-// Plot clearances (independent re-check)
+// Site clearances (independent re-check of each site's building rectangle)
 let plotRoadViolations = 0, plotOverlap = 0;
 for (const p of plots) {
   const poly = rectPoly(p.x, p.z, p.angle, p.w, p.d);
@@ -555,7 +680,7 @@ for (const p of plots) {
 const stats = {
   roads: roads.length, roadsWithOsmWidth: roads.filter((r) => r.widthSource === 'osm').length, junctionVertices: junctionNodes,
   areas: areas.length, buildings: buildings.length, heightFromOsm, heightFromLevels, heightEstimated, triangulationWarnings: triFail,
-  landmarks: landmarks.length, labels: labels.length, plotCandidates: candidates.length, validCandidates: valid.length, plots: plots.length,
+  landmarks: landmarks.length, labels: labels.length, siteCandidates: siteCandidates.length, plots: plots.length,
   hiddenFootprints: new Set(plots.flatMap((p) => p.replaces)).size, plotRoadViolations, plotOverlap,
 };
 
@@ -591,6 +716,7 @@ const out = {
   plots,
   landmarkModels,
   legacyPlotMap,
+  previousPlotMap,
   walkPaths,
   drivePaths,
 };

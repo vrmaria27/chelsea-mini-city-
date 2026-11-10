@@ -64,4 +64,8 @@ export interface PlotPosition {
   z: number;
   /** Optional display number ("plot 7"). */
   number?: number;
+  /** Building types that fit this site; absent = all. */
+  allowed?: BuildingType[];
+  /** Explanation per type that does not fit. */
+  restrictions?: Partial<Record<BuildingType, string>>;
 }

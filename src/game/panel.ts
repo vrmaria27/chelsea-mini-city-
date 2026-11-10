@@ -9,7 +9,7 @@ import { inspectorView } from './inspectView';
 export type Action =
   | `tool:${Tool}`
   | 'undo' | 'rotL' | 'rotR' | 'scaleDown' | 'scaleUp' | 'lower' | 'raise' | 'resetView' | 'resetSave' | 'exitVR'
-  | 'upgrade' | 'closeInspect' | 'toggleMotion' | 'toggleDetail' | 'mapView' | 'about';
+  | 'upgrade' | 'closeInspect' | 'toggleMotion' | 'toggleDetail' | 'toggleSites' | 'mapView' | 'about';
 
 interface Button {
   id: Action;
@@ -145,7 +145,8 @@ export class WorldPanel extends CanvasPanel {
 
     // Chapter progress
     const ch = game.chapterView();
-    this.label(ch.done ? `★ ${ch.title}` : `Chapter ${ch.index + 1} of 3 · ${ch.title}`, 40, 224, 27, ch.done ? COL.good : COL.ink, 'left', 700, W - 80);
+    this.label(ch.done ? `★ ${ch.title}` : `Chapter ${ch.index + 1} of 3 · ${ch.title}`, 40, 224, 27, ch.done ? COL.good : COL.ink, 'left', 700, W - 360);
+    this.label(game.siteSummary(), W - 40, 224, 22, COL.soft, 'right', 600, 320);
     if (ch.goals.length) {
       const gw = (W - 80 - 16 * (ch.goals.length - 1)) / ch.goals.length;
       ch.goals.forEach((g, i) => bar(c, 40 + i * (gw + 16), 248, gw, `${g.done ? '✓ ' : ''}${g.label} ${g.display}/${g.target}`, g.current / g.target, g.done));
@@ -212,6 +213,7 @@ export class WorldPanel extends CanvasPanel {
       ['exitVR', 'Exit VR'],
     ]);
     row(816, 66, [
+      ['toggleSites', `Show sites: ${game.prefs.showSites ? 'On' : 'Off'}`, game.prefs.showSites],
       ['toggleMotion', `Reduced motion: ${game.prefs.reducedMotion ? 'On' : 'Off'}`, game.prefs.reducedMotion],
       ['toggleDetail', `Low detail: ${game.prefs.lowDetail ? 'On' : 'Off'}`, game.prefs.lowDetail],
     ]);

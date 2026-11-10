@@ -118,61 +118,68 @@ export function fountain(b: MeshBuilder, x: number, z: number, y: number, r: num
 // Plot buildings (local frame centred on the plot, front toward +z)
 
 const FLOWER_A = hex('#e07a8f'), FLOWER_B = hex('#f2c14e'), FLOWER_C = hex('#a77bd6');
+const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 
-export function buildingMesh(type: BuildingType, variant = 0, level: Level = 1): MeshBuilder {
-  const l2 = level === 2;
+/**
+ * Building model sized to a site: local frame centred on the site rectangle, x along the street
+ * frontage (−W/2…W/2), z from the back (−D/2) to the street front (+D/2). Nothing leaves that box.
+ * Parametric rather than stretched: terrace width, window and awning counts, trees and paths all
+ * adapt to the site's real dimensions.
+ */
+export function buildingMesh(type: BuildingType, variant = 0, level: Level = 1, W = 24, D = 24): MeshBuilder {
   const b = new MeshBuilder();
+  const l2 = level === 2;
   const r = rng(1000 + variant * 31 + (type === 'shop' ? 7 : type === 'park' ? 13 : 0));
-  const half = 12;
+  const hw = W / 2, hd = D / 2;
   if (type === 'townhouse') {
-    b.flat(-half, -half, half, half, PLOT_Y, P.lawn);
+    b.flat(-hw, -hd, hw, hd, PLOT_Y, P.lawn);
     const brick = P.bricks[variant % P.bricks.length];
     const roof = P.slate[variant % P.slate.length];
-    const h = 12.5 + (variant % 3) * 0.8 + (l2 ? 3.3 : 0); // Level 2 adds a storey
-    const depth = 12;
-    b.setTransform(compose(tmpM, 0, PLOT_Y, 9.5));
-    const xs = [-11, -3.6, 3.6, 11];
-    for (let i = 0; i < 3; i++) {
-      const wall = i === 1 && variant % 2 ? P.creams[variant % 3] : brick;
-      terraceHouse(b, xs[i], xs[i + 1], depth, h, wall, roof, P.doors[(variant + i) % P.doors.length], wall === brick, l2);
+    const fs = clamp(D * 0.14, 1.5, 2.5); // front area with railings (room for the Level 2 porch)
+    const depth = clamp(D - fs - 1.2, Math.min(4.5, D - fs - 0.45), 13); // roof eaves overhang ~0.3 m
+    const h = clamp(depth * 0.95, 7.5, 12.5) + (variant % 3) * 0.8 + (l2 ? 3.3 : 0); // Level 2 adds a storey
+    const n = Math.max(1, Math.round(W / 7));
+    const front = hd - fs;
+    b.setTransform(compose(tmpM, 0, PLOT_Y, front));
+    for (let i = 0; i < n; i++) {
+      const x0 = -hw + (W * i) / n + 0.05, x1 = -hw + (W * (i + 1)) / n - 0.05;
+      const wall = i % 2 === 1 && variant % 2 ? P.creams[variant % 3] : brick;
+      terraceHouse(b, x0, x1, depth, h, wall, roof, P.doors[(variant + i) % P.doors.length], wall === brick, l2);
+      if (i > 0) chimney(b, x0, -depth / 2, h);
     }
-    for (const cx of [-3.6, 3.6]) chimney(b, cx, -depth / 2, h);
-    // front railings + steps
-    b.box(-11, 0, 1.6, 11, 1.0, 1.8, hex('#2b2b2e'));
+    b.box(-hw + 0.2, 0, Math.min(fs - 0.25, 1.6), hw - 0.2, 1.0, Math.min(fs - 0.05, 1.8), hex('#2b2b2e')); // front railings
     b.setTransform(null);
-    if (l2) {
-      // front-garden planters and clipped bay trees
-      for (const x of [-9.5, -1.8, 5.4]) {
-        b.box(x - 0.8, PLOT_Y, 11.4, x + 0.8, PLOT_Y + 0.7, 12, P.stucco);
-        b.blob(x, PLOT_Y + 1.6, 11.7, 0.75, 0.9, P.greens[3]);
-      }
+    if (l2 && fs > 1.9) for (let i = 0; i < n; i++) {
+      const x = -hw + (W * (i + 0.5)) / n;
+      b.box(x - 0.6, PLOT_Y, hd - 0.9, x + 0.6, PLOT_Y + 0.6, hd - 0.2, P.stucco);
+      b.blob(x, PLOT_Y + 1.3, hd - 0.55, 0.55, 0.7, P.greens[3]);
     }
-    // back garden tree
-    tree(b, -6 + r() * 12, -8.5, PLOT_Y, 0.7, P.greens[variant % 4], r());
+    const garden = D - fs - depth;
+    if (garden > 4 && W > 6) { const ts = clamp(garden / 8, 0.45, 0.75); const tx = clamp(-hw + 3 + r() * (W - 6), -hw + 3.2 * ts, hw - 3.2 * ts); tree(b, tx, Math.max(-hd + 3.2 * ts, -hd + garden / 2), PLOT_Y, ts, P.greens[variant % 4], r()); }
   } else if (type === 'shop') {
-    b.flat(-half, -half, half, half, PLOT_Y, P.plaza);
+    b.flat(-hw, -hd, hw, hd, PLOT_Y, P.plaza);
     const wall = variant % 2 ? P.creams[variant % 3] : P.pastels[variant % 4];
     const awning = P.awnings[variant % P.awnings.length];
-    b.setTransform(compose(tmpM, 0, PLOT_Y, 6));
-    const w = 10, d = 14, h = 9;
+    const fs = clamp(D * 0.22, 1.2, 3.5); // forecourt
+    const w = hw - 0.3, d = clamp(D - fs - 0.3, 4.5, 16), h = 8.5;
+    b.setTransform(compose(tmpM, 0, PLOT_Y, hd - fs));
     b.box(-w, 0, -d, w, h, 0, wall);
-    b.box(-w - 0.3, h, -d - 0.3, w + 0.3, h + 0.9, 0.3, shade(wall, 0.92)); // parapet
-    b.gable(-w + 1, -d + 1, w - 1, -1, h + 0.9, 2.2, P.slate[0], true, wall);
-    // shopfront glass and sign band
-    b.quad([-w + 1, 0.3, 0.1], [w - 1, 0.3, 0.1], [w - 1, 3.4, 0.1], [-w + 1, 3.4, 0.1], P.glass);
-    b.box(-w, 3.5, 0, w, 4.4, 0.3, l2 ? hex('#d8b45a') : awning); // gilded sign band at Level 2
-    // striped awning, sloping down toward the street
-    for (let i = 0; i < 8; i++) {
-      const x0 = -w + (i * 2 * w) / 8, x1 = -w + ((i + 1) * 2 * w) / 8;
+    b.box(-w, h, -d, w, h + 0.9, 0.2, shade(wall, 0.92)); // parapet
+    if (d > 4) b.gable(-w + 0.8, -d + 0.8, w - 0.8, -0.8, h + 0.9, Math.min(2.2, d * 0.2), P.slate[0], true, wall);
+    b.quad([-w + 0.8, 0.3, 0.1], [w - 0.8, 0.3, 0.1], [w - 0.8, 3.4, 0.1], [-w + 0.8, 3.4, 0.1], P.glass);
+    b.box(-w, 3.5, 0, w, 4.4, 0.25, l2 ? hex('#d8b45a') : awning); // sign band (gilded at Level 2)
+    const stripes = Math.max(2, Math.round((2 * w) / 2.5));
+    const reach = Math.min(l2 ? 3.4 : 2.4, fs - 0.2), drop = l2 ? 2.5 : 2.8;
+    for (let i = 0; i < stripes; i++) {
+      const x0 = -w + (i * 2 * w) / stripes, x1 = -w + ((i + 1) * 2 * w) / stripes;
       const c = i % 2 ? awning : P.stucco;
-      const reach = l2 ? 3.8 : 2.6, drop = l2 ? 2.5 : 2.8; // Level 2: deeper awning
       b.quad([x0, drop, reach], [x1, drop, reach], [x1, 3.5, 0.2], [x0, 3.5, 0.2], c);
       b.quad([x1, drop, reach], [x0, drop, reach], [x0, 3.5, 0.2], [x1, 3.5, 0.2], shade(c, 0.8));
-      if (l2) b.box(x0, drop - 0.5, reach - 0.1, x1, drop, reach, i % 2 ? P.stucco : awning); // valance
+      if (l2) b.box(x0, drop - 0.5, reach - 0.1, x1, drop, reach, i % 2 ? P.stucco : awning);
     }
-    // upper windows
-    for (let i = 0; i < 4; i++) {
-      const cx = -w + 2.5 + i * 5;
+    const wins = Math.max(1, Math.round((2 * w) / 4.5));
+    for (let i = 0; i < wins; i++) {
+      const cx = -w + ((i + 0.5) * 2 * w) / wins;
       b.quad([cx - 0.8, 5.3, 0.1], [cx + 0.8, 5.3, 0.1], [cx + 0.8, 7.6, 0.1], [cx - 0.8, 7.6, 0.1], P.window);
       if (l2) {
         b.box(cx - 1, 4.9, 0.1, cx + 1, 5.3, 0.6, P.bench);
@@ -180,66 +187,127 @@ export function buildingMesh(type: BuildingType, variant = 0, level: Level = 1):
       }
     }
     b.setTransform(null);
-    // planters + café tables on the forecourt
-    for (const x of [-8, 8]) {
-      b.box(x - 1, PLOT_Y, 9, x + 1, PLOT_Y + 0.8, 10.5, P.bench);
-      b.blob(x, PLOT_Y + 1.6, 9.75, 1.0, 0.9, P.greens[1]);
+    if (fs >= 1.8 && W >= 9) for (const x of [-hw + 1.2, hw - 1.2]) {
+      b.box(x - 0.8, PLOT_Y, hd - 1.3, x + 0.8, PLOT_Y + 0.7, hd - 0.2, P.bench);
+      b.blob(x, PLOT_Y + 1.4, hd - 0.75, 0.75, 0.8, P.greens[1]);
     }
-    for (const x of [-3, 3]) b.cylinder(x, 9.6, PLOT_Y, PLOT_Y + 1.0, 0.7, 6, P.stucco);
-    if (l2) {
-      // café umbrellas on the forecourt
-      for (const x of [-5.5, 0, 5.5]) {
-        b.cylinder(x, 10.6, PLOT_Y, PLOT_Y + 3.0, 0.12, 4, P.bench, false);
-        b.blob(x, PLOT_Y + 3.1, 10.6, 1.9, 0.45, x === 0 ? P.stucco : awning, 0.26);
-      }
+    if (l2 && fs >= 2.4) for (let i = 0; i < Math.max(1, Math.floor((W - 4) / 5)); i++) {
+      const x = -hw + 3 + i * 5;
+      if (x > hw - 2) break;
+      b.cylinder(x, hd - fs / 2, PLOT_Y, PLOT_Y + 2.8, 0.1, 4, P.bench, false);
+      b.blob(x, PLOT_Y + 2.9, hd - fs / 2, Math.min(1.6, fs / 2 - 0.1), 0.4, i % 2 ? P.stucco : awning, 0.26);
     }
   } else {
-    // Park: lawn, gravel paths, hedges, trees, fountain and benches
-    b.flat(-half, -half, half, half, PLOT_Y, P.lawn);
-    b.flat(-1.6, -half, 1.6, half, PLOT_Y + 0.03, P.gravel);
-    b.flat(-half, -1.6, half, 1.6, PLOT_Y + 0.03, P.gravel);
-    const hy = PLOT_Y;
-    for (const [x0, z0, x1, z1] of [
-      [-12, -12, -2.4, -11], [2.4, -12, 12, -11], [-12, 11, -2.4, 12], [2.4, 11, 12, 12],
-      [-12, -11, -11, -2.4], [-12, 2.4, -11, 11], [11, -11, 12, -2.4], [11, 2.4, 12, 11],
-    ]) b.box(x0, hy, z0, x1, hy + 1.1, z1, P.hedge);
-    fountain(b, 0, 0, PLOT_Y + 0.03, 3.2);
-    const spots = [[-7, -7], [7, -7], [-7, 7], [7, 7]];
-    spots.forEach(([x, z], i) => tree(b, x + (r() - 0.5) * 2, z + (r() - 0.5) * 2, PLOT_Y, 0.8 + r() * 0.25, P.greens[(i + variant) % 4], r() * 3));
-    bench(b, -5, 2.6, PLOT_Y, true);
-    bench(b, 5, -2.6, PLOT_Y, true);
+    // Park: lawn, gravel paths, hedges, trees, benches and (when roomy) a fountain
+    b.flat(-hw, -hd, hw, hd, PLOT_Y, P.lawn);
+    const pw = clamp(Math.min(W, D) * 0.12, 1.2, 1.8);
+    b.flat(-pw, -hd, pw, hd, PLOT_Y + 0.03, P.gravel);
+    if (W >= 12) b.flat(-hw, -pw, hw, pw, PLOT_Y + 0.03, P.gravel);
+    const hy = PLOT_Y, t = 0.9;
+    // hedge border with an entrance gap on the street side and the paths' ends
+    for (const [x0, x1] of [[-hw, -pw - 0.6], [pw + 0.6, hw]] as const) {
+      b.box(x0, hy, hd - t, x1, hy + 1.0, hd, P.hedge);
+      b.box(x0, hy, -hd, x1, hy + 1.0, -hd + t, P.hedge);
+    }
+    for (const x of [-hw, hw - t]) for (const [z0, z1] of (W >= 12 ? [[-hd + t, -pw - 0.6], [pw + 0.6, hd - t]] : [[-hd + t, hd - t]]) as [number, number][]) b.box(x, hy, z0, x + t, hy + 1.0, z1, P.hedge);
+    const big = Math.min(W, D) >= 14;
+    if (big) fountain(b, 0, 0, PLOT_Y + 0.03, Math.min(3.2, Math.min(W, D) * 0.14));
+    // trees in the four lawn quadrants, sized to stay inside the hedge
+    const qx = (hw + pw) / 2, qz = (hd + pw) / 2;
+    const room = Math.min(hw - pw - 1.2, hd - pw - 1.2);
+    const s = clamp(room / 3.4, 0.35, 0.95);
+    const spots: [number, number][] = W >= 12 ? [[-qx, -qz], [qx, -qz], [-qx, qz], [qx, qz]] : [[-qx, -hd / 2], [qx, -hd / 2], [-qx, hd / 2], [qx, hd / 2]];
+    // each canopy (radius ≈ 3.15 × scale) is shrunk if needed so it never overhangs the site edge
+    spots.forEach(([x, z], i) => tree(b, x, z, PLOT_Y, Math.max(0.3, Math.min(s, (Math.min(hw - Math.abs(x), hd - Math.abs(z)) - 0.15) / 3.15)), P.greens[(i + variant) % 4], r() * 3));
+    if (D >= 10) { bench(b, -pw - 1.4, Math.min(2.6, hd - 2), PLOT_Y, false); bench(b, pw + 1.4, -Math.min(2.6, hd - 2), PLOT_Y, false); }
     if (l2) {
-      // Level 2: flower beds, extra benches and lamp posts
-      const beds: [number, number, RGB][] = [[-6, -2.6, FLOWER_A], [6, 2.6, FLOWER_B], [-2.6, 6, FLOWER_C], [2.6, -6, FLOWER_A]];
-      for (const [x, z, c] of beds) b.box(x - 1.6, PLOT_Y, z - 0.6, x + 1.6, PLOT_Y + 0.45, z + 0.6, c);
-      bench(b, -2.6, -5, PLOT_Y, false);
-      bench(b, 2.6, 5, PLOT_Y, false);
-      for (const [x, z] of [[-2.2, -2.2], [2.2, 2.2], [-2.2, 2.2], [2.2, -2.2]]) {
-        b.cylinder(x, z, PLOT_Y, PLOT_Y + 3.2, 0.1, 4, hex('#2b2b2e'), false);
-        b.blob(x, PLOT_Y + 3.4, z, 0.35, 0.35, hex('#fff1c2'));
+      const beds: [number, number, RGB][] = [[-qx, 0, FLOWER_A], [qx, 0, FLOWER_B], [0, -qz, FLOWER_C], [0, qz, FLOWER_A]];
+      for (const [x, z, c] of beds) {
+        const bx = Math.min(1.4, Math.abs(qx) - 1), bz = 0.5;
+        if (W >= 12 || x !== 0) b.box(x - bx, PLOT_Y, z - bz, x + bx, PLOT_Y + 0.45, z + bz, c);
       }
+      for (const [x, z] of [[-pw - 0.4, -pw - 0.4], [pw + 0.4, pw + 0.4], [-pw - 0.4, pw + 0.4], [pw + 0.4, -pw - 0.4]]) {
+        b.cylinder(x, z, PLOT_Y, PLOT_Y + 3.0, 0.1, 4, hex('#2b2b2e'), false);
+        b.blob(x, PLOT_Y + 3.2, z, 0.32, 0.32, hex('#fff1c2'));
+      }
+      if (D >= 10) bench(b, 0, -hd + 1.6, PLOT_Y, true);
     }
   }
   return b;
 }
 
-/** Vacant plot: gravel pad, dashed border and a small "for sale" signboard (local 24 × 24 frame, scaled to the plot). */
-function vacantPad(b: MeshBuilder, p: PlotDef): void {
-  const h = 12;
-  b.setTransform(plotMatrix(p, tmpM));
-  b.box(-h, PAVE_Y, -h, h, PLOT_Y - 0.02, h, hex('#efd08a')); // warm sand: clearly a development site
-  const n = 6;
-  const seg = (2 * h) / n;
-  for (let i = 0; i < n; i++) {
-    const a = -h + i * seg + seg * 0.15, c = a + seg * 0.7;
-    b.box(a, PLOT_Y, -h, c, PLOT_Y + 0.25, -h + 0.6, P.post);
-    b.box(a, PLOT_Y, h - 0.6, c, PLOT_Y + 0.25, h, P.post);
-    b.box(-h, PLOT_Y, a, -h + 0.6, PLOT_Y + 0.25, c, P.post);
-    b.box(h - 0.6, PLOT_Y, a, h, PLOT_Y + 0.25, c, P.post);
+/** Site boundary as a flat ring in map space (rectangle fallback for plots without one). */
+export function siteBoundary(p: PlotDef): number[] {
+  if (p.boundary) return p.boundary;
+  const c = Math.cos(p.angle), s = Math.sin(p.angle);
+  return ([[-p.w / 2, -p.d / 2], [p.w / 2, -p.d / 2], [p.w / 2, p.d / 2], [-p.w / 2, p.d / 2]] as [number, number][]).flatMap(([x, z]) => [p.x + x * c + z * s, p.z - x * s + z * c]);
+}
+
+function siteTris(p: PlotDef): number[] {
+  if (p.boundaryTris) return p.boundaryTris;
+  const r = siteBoundary(p);
+  return [r[0], r[1], r[2], r[3], r[4], r[5], r[0], r[1], r[4], r[5], r[6], r[7]];
+}
+
+function flatTris(b: MeshBuilder, tris: number[], y: number, col: RGB): void {
+  for (let i = 0; i + 5 < tris.length; i += 6) {
+    const a = [tris[i], y, tris[i + 1]], c1 = [tris[i + 2], y, tris[i + 3]], c2 = [tris[i + 4], y, tris[i + 5]];
+    const up = (c1[2] - a[2]) * (c2[0] - a[0]) - (c1[0] - a[0]) * (c2[2] - a[2]);
+    if (up >= 0) b.tri(a, c1, c2, col);
+    else b.tri(a, c2, c1, col);
   }
-  // sign at the front-left corner
-  b.box(-h + 1.6, PLOT_Y, h - 2.2, -h + 2.0, PLOT_Y + 4.2, h - 1.8, P.post);
-  b.box(-h + 0.6, PLOT_Y + 2.4, h - 2.1, -h + 4.6, PLOT_Y + 4.6, h - 1.9, P.sign);
+}
+
+function pointInRing(x: number, z: number, r: number[]): boolean {
+  let inside = false;
+  const n = r.length / 2;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = r[i * 2], zi = r[i * 2 + 1], xj = r[j * 2], zj = r[j * 2 + 1];
+    if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** Thin wall along a closed ring (both faces), e.g. site hoarding or highlight outlines. */
+export function ringWall(b: MeshBuilder, ring: number[], y0: number, y1: number, col: RGB, inset = 0): void {
+  const n = ring.length / 2;
+  let cx = 0, cz = 0;
+  for (let i = 0; i < n; i++) { cx += ring[i * 2] / n; cz += ring[i * 2 + 1] / n; }
+  const pt = (i: number): [number, number] => {
+    const x = ring[(i % n) * 2], z = ring[(i % n) * 2 + 1];
+    const l = Math.hypot(cx - x, cz - z) || 1;
+    return [x + ((cx - x) / l) * inset, z + ((cz - z) / l) * inset];
+  };
+  for (let i = 0; i < n; i++) {
+    const a = pt(i), c = pt(i + 1);
+    b.quad([a[0], y0, a[1]], [c[0], y0, c[1]], [c[0], y1, c[1]], [a[0], y1, a[1]], col);
+    b.quad([c[0], y0, c[1]], [a[0], y0, a[1]], [a[0], y1, a[1]], [c[0], y1, c[1]], col);
+  }
+}
+
+/** Vacant development site: neat, lightly speckled ground, a low boundary hoarding and a small build marker. */
+function vacantSite(b: MeshBuilder, p: PlotDef): void {
+  const ring = siteBoundary(p);
+  flatTris(b, siteTris(p), PLOT_Y - 0.02, hex('#efd9a2'));
+  // light texture: deterministic gravel speckles inside the boundary
+  const r = rng(p.number * 97 + 5);
+  const xs = ring.filter((_, i) => i % 2 === 0), zs = ring.filter((_, i) => i % 2 === 1);
+  const [x0, x1, z0, z1] = [Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)];
+  const n = Math.min(40, Math.floor((x1 - x0) * (z1 - z0) / 12));
+  for (let k = 0; k < n * 3 && k < 160; k++) {
+    const x = x0 + r() * (x1 - x0), z = z0 + r() * (z1 - z0);
+    if (!pointInRing(x, z, ring)) continue;
+    const s2 = 0.25 + r() * 0.35;
+    b.flat(x - s2, z - s2, x + s2, z + s2, PLOT_Y, r() < 0.5 ? hex('#e2c98f') : hex('#f6e6bd'));
+  }
+  ringWall(b, ring, PLOT_Y - 0.02, PLOT_Y + 0.55, hex('#fbf6ea'), 0.15); // subtle hoarding / kerb
+  // small build marker: post with a gold "+" board at the street-front corner of the site
+  b.setTransform(plotMatrix(p, tmpM));
+  const mx = -p.w / 2 + 1.2, mz = p.d / 2 - 1.2;
+  b.box(mx - 0.12, PLOT_Y, mz - 0.12, mx + 0.12, PLOT_Y + 3.4, mz + 0.12, P.post);
+  b.box(mx - 1.1, PLOT_Y + 2.6, mz - 0.1, mx + 1.1, PLOT_Y + 4.6, mz + 0.1, hex('#2f5a45'));
+  b.box(mx - 0.75, PLOT_Y + 3.5, mz + 0.1, mx + 0.75, PLOT_Y + 3.7, mz + 0.16, hex('#f2c94c'));
+  b.box(mx - 0.1, PLOT_Y + 2.85, mz + 0.1, mx + 0.1, PLOT_Y + 4.35, mz + 0.16, hex('#f2c94c'));
   b.setTransform(null);
 }
 
@@ -257,43 +325,39 @@ function happinessColor(h: number): RGB {
 }
 
 const buildingCache = new Map<string, MeshBuilder>();
-export function cachedBuilding(type: BuildingType, variant: number, level: Level = 1): MeshBuilder {
-  const key = `${type}:${variant % 5}:${level}`;
+/** Same mesh for the hover preview and the final building (keyed by type, look, level and site size). */
+export function cachedBuilding(type: BuildingType, variant: number, level: Level = 1, W = 24, D = 24): MeshBuilder {
+  const key = `${type}:${variant % 5}:${level}:${W.toFixed(1)}:${D.toFixed(1)}`;
   let m = buildingCache.get(key);
   if (!m) {
-    m = buildingMesh(type, variant % 5, level);
+    m = buildingMesh(type, variant % 5, level, W, D);
     buildingCache.set(key, m);
   }
   return m;
 }
 
-/**
- * Plot transform (map space). Building meshes are authored on a 24 × 24 m footprint and
- * scaled horizontally to the plot's real frontage and depth.
- */
-export function plotMatrix(p: PlotDef, out: Mat4 = mat4()): Mat4 {
-  compose(out, p.x, 0, p.z, p.angle);
-  const sx = p.w / 24, sz = p.d / 24;
-  for (let i = 0; i < 3; i++) {
-    out[i] *= sx;
-    out[8 + i] *= sz;
-  }
-  return out;
+export function plotBuilding(p: PlotDef, type: BuildingType, level: Level = 1): MeshBuilder {
+  return cachedBuilding(type, p.number, level, p.w, p.d);
 }
 
-/** Dynamic layer: vacant pads, placed buildings and status badges. Rebuilt only when the state changes. */
+/** Site transform (map space): centre of the site rectangle, local +z toward the street. No stretching. */
+export function plotMatrix(p: PlotDef, out: Mat4 = mat4()): Mat4 {
+  return compose(out, p.x, 0, p.z, p.angle);
+}
+
+/** Dynamic layer: vacant sites, placed buildings and status badges. Rebuilt only when the state changes. */
 export function buildPlotsLayer(plots: readonly PlotDef[], buildings: Record<string, Building>, stats: Stats): MeshBuilder {
   const b = new MeshBuilder();
   const m = mat4();
   for (const p of plots) {
     const bld = buildings[p.id];
     if (!bld) {
-      vacantPad(b, p);
+      vacantSite(b, p);
       continue;
     }
+    flatTris(b, siteTris(p), PLOT_Y - 0.02, P.pavement);
     b.setTransform(plotMatrix(p, m));
-    b.box(-12, PAVE_Y, -12, 12, PLOT_Y - 0.02, 12, P.pavement);
-    b.append(cachedBuilding(bld.type, p.number, bld.level));
+    b.append(plotBuilding(p, bld.type, bld.level));
     b.setTransform(null);
     if (bld.type === 'townhouse') badge(b, p.x, p.z, happinessColor(stats.homeHappiness[p.id] ?? 50), bld.level);
     else if (bld.type === 'shop') badge(b, p.x, p.z, stats.activeShops[p.id] ? hex('#e8b84a') : hex('#a8a29a'), bld.level);
@@ -302,18 +366,33 @@ export function buildPlotsLayer(plots: readonly PlotDef[], buildings: Record<str
   return b;
 }
 
-/** Outline frame used for hover highlight (unit: plot size 24, drawn tinted & unlit). */
-export function plotFrame(): MeshBuilder {
+/** Outline that follows a site's boundary (drawn tinted & unlit for hover / highlight). */
+export function siteOutline(p: PlotDef, height = 1.4): MeshBuilder {
   const b = new MeshBuilder();
-  const h = 13.2, t = 1.0, y0 = PLOT_Y, y1 = PLOT_Y + 0.9;
-  b.box(-h, y0, -h, h, y1, -h + t, P.post);
-  b.box(-h, y0, h - t, h, y1, h, P.post);
-  b.box(-h, y0, -h + t, -h + t, y1, h - t, P.post);
-  b.box(h - t, y0, -h + t, h, y1, h - t, P.post);
+  const ring = siteBoundary(p);
+  ringWall(b, ring, PLOT_Y, PLOT_Y + height, P.post, -0.4);
+  ringWall(b, ring, PLOT_Y, PLOT_Y + height, P.post, 1.2);
+  // cap so the outline reads from above
+  const n = ring.length / 2;
+  for (let i = 0; i < n; i++) {
+    const a = [ring[i * 2], ring[i * 2 + 1]], c = [ring[((i + 1) % n) * 2], ring[((i + 1) % n) * 2 + 1]];
+    const l = Math.hypot(c[0] - a[0], c[1] - a[1]) || 1;
+    const nx = (-(c[1] - a[1]) / l) * 0.8, nz = ((c[0] - a[0]) / l) * 0.8;
+    const y = PLOT_Y + height;
+    b.quad([a[0] - nx, y, a[1] - nz], [c[0] - nx, y, c[1] - nz], [c[0] + nx, y, c[1] + nz], [a[0] + nx, y, a[1] + nz], P.post);
+    b.quad([a[0] - nx, y, a[1] - nz], [a[0] + nx, y, a[1] + nz], [c[0] + nx, y, c[1] + nz], [c[0] - nx, y, c[1] - nz], P.post);
+  }
   return b;
 }
 
-/** Flat ring showing the 80 m effect radius of shops and parks. */
+/** Tall translucent beacon above a free site ("Show buildable sites"), visible across the table. */
+export function siteBeacon(): MeshBuilder {
+  const b = new MeshBuilder();
+  b.cylinder(0, 0, PLOT_Y, 34, 1.6, 8, hex('#3d8f6a'), false); // green column: contrasts with cream paving and brick
+  b.blob(0, 39, 0, 4.8, 5.2, hex('#f2b632'), 0.4); // gold diamond marker, readable from across the table
+  return b;
+}
+
 export function radiusRing(radius: number, width = 1.6, segments = 64): MeshBuilder {
   const b = new MeshBuilder();
   const y = PLOT_Y + 1.2;

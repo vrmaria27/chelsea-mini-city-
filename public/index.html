@@ -84,6 +84,7 @@
     #inspector .reason { color: var(--bad); margin: 4px 0 0; font-weight: 600; }
     #controls [aria-pressed="true"] { background: var(--green); color: #fff; border-color: var(--green); }
     .tool.inspect .cost { color: var(--soft); font-weight: 600; }
+    .site-count { align-self: center; max-width: 120px; font-size: 12px; font-weight: 700; color: var(--green); line-height: 1.3; padding: 0 4px; }
     #vr { position: fixed; z-index: 3; right: 14px; bottom: 14px; padding: 10px 12px; max-width: 300px; font-size: 13px; }
     #vr button { width: 100%; background: var(--green); color: #fff; border-color: var(--green); font-weight: 700; font-size: 16px; padding: 10px; }
     #vr p { margin: 0; color: var(--soft); }
@@ -151,6 +152,7 @@
     <button data-action="mapView" class="wide" aria-pressed="false" title="Top-down, north-up view (M)">Map view (north up)</button>
     <button data-action="resetView" class="wide" title="Reset camera and model (R)">Reset view</button>
     <button data-action="resetSave" id="resetSave" class="wide">Reset save</button>
+    <button data-action="toggleSites" id="toggleSites" class="wide" aria-pressed="true" title="Highlight free development sites (B)">Show buildable sites: On</button>
     <button data-action="toggleMotion" id="toggleMotion" class="wide" aria-pressed="false">Reduced motion: Off</button>
     <button data-action="toggleDetail" id="toggleDetail" class="wide" aria-pressed="false">Low detail: Off</button>
     <button data-action="help">How to play</button>
@@ -166,6 +168,7 @@
     <button class="tool" data-action="tool:shop" aria-pressed="false"><b>Shop</b><span class="cost">£1,500</span><small>+£200/tick near homes</small></button>
     <button class="tool" data-action="tool:park" aria-pressed="false"><b>Park</b><span class="cost">£750</span><small>+10 happiness nearby</small></button>
     <button class="tool inspect" data-action="tool:inspect" aria-pressed="false"><b>Inspect</b><span class="cost">details</span><small>&amp; upgrades</small></button>
+    <div class="site-count" id="siteCount" aria-live="polite"></div>
   </section>
 
   <section id="vr" class="hud card"><p>Checking for VR support…</p></section>

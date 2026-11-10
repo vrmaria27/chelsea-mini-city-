@@ -103,6 +103,9 @@ function doAction(a: Action | 'help' | 'about'): void {
     case 'toggleDetail':
       game.setPref('lowDetail', !game.prefs.lowDetail);
       break;
+    case 'toggleSites':
+      game.setPref('showSites', !game.prefs.showSites);
+      break;
     case 'undo':
       game.undo();
       break;
@@ -158,7 +161,7 @@ function doAction(a: Action | 'help' | 'about'): void {
 const ui = {
   money: $('money'), residents: $('residents'), happiness: $('happiness'), income: $('income'),
   tick: $('tick'), chapter: $('chapter'), goals: $('goals'), hint: $('hint'), message: $('message'),
-  inspector: $('inspector'), motion: $('toggleMotion'), detail: $('toggleDetail'),
+  inspector: $('inspector'), motion: $('toggleMotion'), detail: $('toggleDetail'), sites: $('toggleSites'), siteCount: $('siteCount'),
 };
 
 document.addEventListener('click', (e) => {
@@ -202,6 +205,9 @@ function renderHud(): void {
   ui.motion.textContent = `Reduced motion: ${game.prefs.reducedMotion ? 'On' : 'Off'}`;
   ui.detail.setAttribute('aria-pressed', String(game.prefs.lowDetail));
   ui.detail.textContent = `Low detail: ${game.prefs.lowDetail ? 'On' : 'Off'}`;
+  ui.sites.setAttribute('aria-pressed', String(game.prefs.showSites));
+  ui.sites.textContent = `Show buildable sites: ${game.prefs.showSites ? 'On' : 'Off'}`;
+  ui.siteCount.textContent = game.siteSummary();
   renderInspector();
 }
 
@@ -268,7 +274,7 @@ function showAbout(): void {
        available under the Open Database License (ODbL 1.0). Extract retrieved ${esc(meta.retrieved.slice(0, 10))} (OSM data as of ${esc(String(meta.osmBase).slice(0, 10))}).</p>
        <p><b>Sourced from OSM:</b> street centrelines, names and junctions; pedestrian areas and squares; parks and gardens; building footprints and most building heights (from storey counts); landmark positions.</p>
        <p><b>Estimated or stylised:</b> road widths (except where tagged), heights of buildings without height/storey tags, façade colours, flat roofs, trees in green spaces, people and traffic.</p>
-       <p><b>Fictional:</b> the 20 numbered development plots are imaginary redevelopment opportunities for the game. They are not claims that any real property is vacant or available; real buildings under them are hidden on the model.</p>
+       <p><b>Fictional:</b> the ${m.plots.length} numbered development sites are imaginary redevelopment opportunities. To create them, selected ordinary building footprints along real streets are cleared on the model. This does not imply that any real property is vacant, for sale or available. Landmarks such as Peter Jones, squares and parks are never used.</p>
        <p class="sub">Playing an older save? <button data-action-map="legacy">Switch to the legacy map</button></p>`
     : `<p><b>${esc(m.title)}</b></p><p>${esc(m.notes)}</p>
        <p><button data-action-map="chelsea-osm">Switch to the real Chelsea map</button> (your city moves to matching plots; a backup is kept).</p>`;
@@ -285,7 +291,9 @@ else attr.innerHTML = `Legacy approximate map · <button data-action="about" cla
 
 // ---- Migration choice -----------------------------------------------------------------------
 if (game.pendingChoice) {
-  $('choiceBody').textContent = `${game.pendingChoice.notice} Your original save has been kept safely. How would you like to continue?`;
+  $('choiceBody').textContent = `${game.pendingChoice.notice} Your original save has been kept safely (a recoverable backup). How would you like to continue?`;
+  $('choiceLegacy').hidden = !game.pendingChoice.fromLegacy;
+  $('choiceNew').textContent = game.pendingChoice.fromLegacy ? 'Start on the real Chelsea map' : 'Start a new city on the updated map';
   $('choice').hidden = false;
 }
 $('choiceLegacy').addEventListener('click', () => chooseMap('legacy'));
@@ -427,6 +435,7 @@ window.addEventListener('keydown', (e) => {
   else if (k === '+' || k === '=') doAction('scaleUp');
   else if (k === 'r') doAction('resetView');
   else if (k === 'm') doAction('mapView');
+  else if (k === 'b') doAction('toggleSites');
   else if (k === 'escape') {
     if (!$('onboarding').hidden) $('onboarding').hidden = true;
     else doAction('closeInspect');

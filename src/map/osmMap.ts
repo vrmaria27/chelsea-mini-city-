@@ -19,6 +19,7 @@ interface OsmData {
   plots: (PlotDef & { replaces: string[] })[];
   landmarkModels: (LandmarkModelData & { model: string; name: string })[];
   legacyPlotMap: Record<string, string>;
+  previousPlotMap: Record<string, string>;
   walkPaths: number[][];
   drivePaths: { name: string; w: number; pts: number[] }[];
 }
@@ -224,5 +225,6 @@ export const osmMap: GameMap = {
     'Road widths without a width tag, building heights without height/levels tags, façade colours and trees are stylised estimates. ' +
     'Development plots are fictional redevelopment opportunities, not claims that real properties are vacant or available.',
   legacyPlotMap: OSM.legacyPlotMap,
+  previousPlotMap: OSM.previousPlotMap,
   decals: () => OSM.landmarkModels.filter((m) => m.model === 'peter-jones').flatMap((m) => peterJonesDecals(m)),
 };
