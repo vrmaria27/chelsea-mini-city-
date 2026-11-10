@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
   push:
     branches: [osm-import]
-    paths: [scripts/osm/fetch.mjs, .github/workflows/import-map.yml]
+    paths: [scripts/osm/fetch.mjs, scripts/osm/fetch-square.mjs, .github/workflows/import-map.yml]
 
 permissions:
   contents: write
@@ -21,11 +21,12 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/osm/fetch.mjs --out data/osm/raw.json
+      - run: node scripts/osm/fetch-square.mjs --out data/osm/square-raw.json
       - name: Commit extract
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/osm/raw.json
+          git add data/osm/raw.json data/osm/square-raw.json
           git diff --cached --quiet && echo "No change" && exit 0
           git commit -m "Import OpenStreetMap extract ($(date -u +%Y-%m-%d)) — © OpenStreetMap contributors, ODbL"
           git push
