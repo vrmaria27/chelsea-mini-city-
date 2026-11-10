@@ -39,6 +39,21 @@ const bboxLatLon = { south: +corners[0][0].toFixed(6), west: +corners[0][1].toFi
 
 const ways = raw.elements.filter((e) => e.type === 'way' && e.geometry);
 const rels = raw.elements.filter((e) => e.type === 'relation');
+// Geographic correction (documented in docs/square-buildings.md): the main extract returned some building
+// multipolygons without member geometry, so they were silently missing from the map (a hole on the south
+// side of Sloane Square: Wyndham House and Wellesley House). Fill member geometry from the focused
+// square extract (data/osm/square-buildings.json) when available.
+const SQUARE_BUILDINGS_FILE = 'data/osm/square-buildings.json';
+let squareBuildingsRaw = null;
+try { squareBuildingsRaw = JSON.parse(readFileSync(SQUARE_BUILDINGS_FILE, 'utf8')); } catch { /* optional */ }
+const restoredRelations = [];
+if (squareBuildingsRaw) {
+  for (const r of rels) {
+    if (r.members?.some((m) => m.geometry)) continue;
+    const full = squareBuildingsRaw.elements.find((e) => e.type === 'relation' && e.id === r.id);
+    if (full?.members?.some((m) => m.geometry)) { r.members = full.members; restoredRelations.push(r.id); }
+  }
+}
 const report = { warnings: [] };
 
 // Junction detection. Overpass `out geom` omits node ids, but a shared OSM node always has
@@ -150,10 +165,27 @@ function buildingHeight(t, id) {
 // Landmarks with custom models (stable ids). Their footprints are protected from plot generation and
 // the generic extrusion is replaced in game by the custom model.
 const CUSTOM_LANDMARKS = {
-  28682626: { id: 'landmark:peter-jones', model: 'peter-jones' },
+  w28682626: { id: 'landmark:peter-jones', model: 'peter-jones' },
+  // Sloane Square perimeter reconstruction (see docs/square-buildings.md). Keys are OSM type+id.
+  w532074737: { id: 'square:15-16', model: 'square:15-16' },
+  w532074738: { id: 'square:sloane-st-143-144', model: 'square:sloane-st-143-144' },
+  w532074739: { id: 'square:sloane-st-141-142', model: 'square:sloane-st-141-142' },
+  w532097385: { id: 'square:13-14', model: 'square:13-14' },
+  w532097377: { id: 'landmark:sloane-square-hotel', model: 'square:hotel' },
+  w898482966: { id: 'square:1-6', model: 'square:1-6' },
+  w899130386: { id: 'square:52-56', model: 'square:52-56' },
+  w532635270: { id: 'landmark:colbert-48-51', model: 'square:48-51' },
+  w147249460: { id: 'landmark:royal-court-theatre', model: 'square:royal-court' },
+  w140334697: { id: 'landmark:sloane-square-station', model: 'square:station' },
+  w532635263: { id: 'square:station-kiosk', model: 'square:station-kiosk' },
+  r12224305: { id: 'landmark:wyndham-house', model: 'square:wyndham' },
+  r12224306: { id: 'landmark:wellesley-house', model: 'square:wellesley' },
+  w532534277: { id: 'square:33-lurgan-mansions', model: 'square:lurgan' },
+  w532534279: { id: 'square:28-31', model: 'square:28-31' },
+  w223451081: { id: 'landmark:holy-trinity', model: 'square:holy-trinity' },
 };
 // Other footprints that belong to a protected landmark (Historic England lists 25 Cadogan Gardens as part of Peter Jones).
-const PROTECTED_WAYS = new Set([28682626, 1186000571]);
+const PROTECTED_WAYS = new Set([28682626, 1186000571, 12224305, 12224306]); // + listed Wyndham/Wellesley House (relations)
 const PROTECTED_TAGS = (t) => !!(t.name && (t.building === 'church' || t.building === 'school' || t.building === 'retail' || t.tourism || t.amenity || t.historic)) || ['church', 'chapel', 'cathedral', 'train_station', 'transportation'].includes(t.building) || /Theatre|Gallery|Church|Hall|Station/.test(t.name ?? '');
 for (const e of [...ways, ...rels]) {
   const t = e.tags ?? {};
@@ -172,7 +204,7 @@ for (const e of [...ways, ...rels]) {
       triFail++;
       report.warnings.push(`building ${e.type}/${e.id} triangulation mismatch (${trisArea(tris).toFixed(1)} vs ${a.toFixed(1)})`);
     }
-    const custom = e.type === 'way' ? CUSTOM_LANDMARKS[e.id] : undefined;
+    const custom = CUSTOM_LANDMARKS[`${e.type[0]}${e.id}`];
     buildings.push({
       id: `${e.type[0]}${e.id}`,
       osmId: e.id,
@@ -194,6 +226,7 @@ for (const e of [...ways, ...rels]) {
 // the rounded drum). The facade run is the contiguous set of outline edges fronting King's Road and
 // Sloane Square; the recessed storey outline is that run offset inward (computed here, offline).
 const landmarkModels = [];
+report.restoredRelations = restoredRelations;
 {
   const way = ways.find((w) => w.id === 28682626);
   const upperWay = ways.find((w) => w.id === 532097395);
@@ -754,6 +787,44 @@ const stats = {
   hiddenFootprints: new Set(plots.flatMap((p) => p.replaces)).size, plotRoadViolations, plotOverlap,
 };
 
+// ---- Sloane Square perimeter: roof insets for the custom façade models --------------------------
+// For each reconstructed building, the footprint inset by d metres (holes grown by d), triangulated, so
+// the runtime can build mansard / pitched roofs whose slopes meet a flat lid without overlaps.
+function offsetRing(r, d) {
+  // r: [[x,z]...] any orientation; positive d moves edges inward
+  const A = ringArea(r) > 0 ? 1 : -1;
+  const n = r.length, out = [];
+  for (let i = 0; i < n; i++) {
+    const a = r[(i - 1 + n) % n], p = r[i], b = r[(i + 1) % n];
+    const e1 = [p[0] - a[0], p[1] - a[1]], e2 = [b[0] - p[0], b[1] - p[1]];
+    const l1 = Math.hypot(...e1) || 1, l2 = Math.hypot(...e2) || 1;
+    // inward normals (for A>0 rings inward is left-hand: (-ez, ex))
+    const n1 = [(-e1[1] / l1) * A, (e1[0] / l1) * A], n2 = [(-e2[1] / l2) * A, (e2[0] / l2) * A];
+    const m = [n1[0] + n2[0], n1[1] + n2[1]], ml = Math.hypot(...m) || 1;
+    const cos = (m[0] / ml) * n1[0] + (m[1] / ml) * n1[1];
+    const k = d / Math.max(0.35, cos);
+    out.push([p[0] + (m[0] / ml) * k, p[1] + (m[1] / ml) * k]);
+  }
+  return out;
+}
+const squareRoofs = {};
+for (const bl of buildings) {
+  if (!bl.custom?.startsWith('square:')) continue;
+  const toPts = (fr) => { const q = []; for (let i = 0; i < fr.length; i += 2) q.push([fr[i], fr[i + 1]]); return q; };
+  const outer = toPts(bl.rings[0]), holes = bl.rings.slice(1).map(toPts);
+  const insets = {};
+  for (const d of [0.6, 1.2, 2.0, 3.0]) {
+    const o = offsetRing(outer, d);
+    const hs = holes.map((h) => offsetRing(h, d)); // a hole's "inward" (its own interior) is outward for the building; flip:
+    const hsGrow = holes.map((h) => offsetRing(h, -d));
+    if (Math.sign(ringArea(o)) !== Math.sign(ringArea(outer)) || Math.abs(ringArea(o)) < Math.abs(ringArea(outer)) * 0.2) continue;
+    void hs;
+    let tris; try { tris = triangulate(o, hsGrow); } catch { continue; }
+    insets[d] = { ring: o.flatMap((p) => [round1(p[0]), round1(p[1])]), holes: hsGrow.map((h) => h.flatMap((p) => [round1(p[0]), round1(p[1])])), tris: tris.map(round1) };
+  }
+  squareRoofs[bl.id] = insets;
+}
+
 const out = {
   meta: {
     mapId: MAP_ID,
@@ -790,6 +861,7 @@ const out = {
   walkPaths,
   drivePaths,
   square,
+  squareRoofs,
 };
 mkdirSync(dirname(outFile), { recursive: true });
 writeFileSync(outFile, JSON.stringify(out));

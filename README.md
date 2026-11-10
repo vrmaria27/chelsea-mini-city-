@@ -193,6 +193,23 @@ References (dated, openly licensed photos), observed vs estimated dimensions, th
 
 Square detail comes from a focused OSM extract (`data/osm/square-raw.json`). It is refreshed by the *Import Sloane Square OSM detail* GitHub Action (push to the `osm-square` branch), then `npm run import:map`.
 
+## Buildings around Sloane Square
+
+The square's perimeter is rebuilt building by building:
+- the Royal Court Theatre, the Underground station and Sloane Square House, and the Sloane Square Hotel;
+- the Court Lodge / King's Arms block with Colbert, Nos. 52–56, Nos. 1–6 and the former bank at 13–14;
+- Nos. 15–16 and 141–145 Sloane Street, Wyndham House, Wellesley House, Lurgan Mansions and Nos. 28–31;
+- Holy Trinity on Sloane Street.
+
+Each has its own façade definition, based on the RBKC Conservation Area Appraisal, Historic England listings and dated, openly licensed photographs. Peter Jones, the central square and all development sites are unchanged. Two listed buildings that were missing from the map (Wyndham House and Wellesley House) are restored.
+
+| Looking north | Looking east |
+|---|---|
+| ![North side](docs/square-look-north.jpg) | ![East side](docs/square-look-east.jpg) |
+| ![Royal Court Theatre](docs/square-royalcourt.jpg) | ![Sloane Square Hotel](docs/square-hotel.jpg) |
+
+The inventory, references, coverage table (with unresolved frontages), performance figures and a headset checklist are in [docs/square-buildings.md](docs/square-buildings.md).
+
 ## Install, run, build
 
 Requires **Node.js 20+**.
@@ -230,6 +247,7 @@ Open the printed `https://192.168.x.x:5173/` on the Quest and accept the self-si
 
 Not yet verified on a headset. Please check:
 
+- [ ] Buildings around the square: see [docs/square-buildings.md](docs/square-buildings.md#manual-quest-review-checklist-square-buildings).
 - [ ] Sloane Square: see the checklist in [docs/sloane-square.md](docs/sloane-square.md#manual-headset-checklist-sloane-square). Watch for leaf shimmer when leaning in, check that sway is comfortable, and check the frame rate with the square filling the view.
 - [ ] Page loads in the Quest Browser over HTTPS and shows **Enter VR**. An older save moves to the real map with its buildings intact (message shown).
 - [ ] Peter Jones is recognisable from the tabletop (curved corner, white top, gold-striped glazing) and holds up when you lean in close.
@@ -259,7 +277,8 @@ src/map/osm/    chelsea-osm.json: processed, bundled OSM-derived map (ODbL)
 scripts/osm/    fetch.mjs (Overpass extract), process.mjs (projection, clipping, plots, labels), geo.mjs
 data/osm/       raw.json: the unmodified OSM extract the bundled map was built from (ODbL)
 docs/           screenshots (top-down map view, gameplay)
-src/map/landmarks/  Peter Jones; Sloane Square (paving, fountain, memorial, furniture), plane trees, leaf atlas
+src/map/landmarks/  Peter Jones; Sloane Square (paving, fountain, memorial, furniture), plane trees, leaf atlas;
+                    squareBuildings.ts + facadeKit.ts (the reconstructed buildings around the square)
 src/lab/        Tree comparison harness (development only; npm run lab:trees)
 src/engine/     Tiny WebGL2 renderer (incl. instancing and the nature shader for trees and water), geometry builder, maths, text + marker atlases
 src/game/       Game controller, inspector view model, city model, scene + overlays + picking, VR panels, life

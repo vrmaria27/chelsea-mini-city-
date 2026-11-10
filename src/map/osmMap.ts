@@ -6,6 +6,7 @@ import { MeshBuilder, hex, rng, shade, type RGB } from '../engine/geometry';
 import { P, tree } from '../game/cityModel';
 import { UPPER_TOP, buildPeterJones, peterJonesDecals, type LandmarkModelData } from './landmarks/peterJones';
 import { SQUARE_Y, buildSloaneSquare, buildSquareNature, type SquareData } from './landmarks/sloaneSquare';
+import { buildSquareBuildings, squareSignDecal, type RoofInsets, type SignQuad } from './landmarks/squareBuildings';
 
 interface OsmRoad { id: number; name: string | null; hw: string; cls: 'main' | 'street' | 'service' | 'pedestrian' | 'path'; w: number; pts: number[]; sidewalk?: boolean }
 interface OsmArea { id: string; kind: 'green' | 'plaza' | 'carriageway' | 'parking'; name: string | null; ring: number[]; tris: number[] }
@@ -24,6 +25,7 @@ interface OsmData {
   walkPaths: number[][];
   drivePaths: { name: string; w: number; pts: number[] }[];
   square: SquareData | null;
+  squareRoofs: Record<string, RoofInsets>;
 }
 
 export const OSM = data as unknown as OsmData;
@@ -146,6 +148,10 @@ function northArrow(b: MeshBuilder, x: number, z: number, y: number): void {
   b.tri([x, y + 0.2, z - s], [x, y + 0.2, z + s * 0.3], [x + s * 0.55, y + 0.2, z + s * 0.7], light);
 }
 
+let squareSigns: SignQuad[] = [];
+/** Label heights just above each reconstructed landmark's own roofline (map metres). */
+const SQUARE_LABEL_Y: Record<string, number> = { 'square:royal-court': 20.5, 'square:holy-trinity': 31.5, 'square:hotel': 26, 'square:station': 28 };
+
 function buildStatic(): MeshBuilder {
   const b = new MeshBuilder();
   const H = HALF;
@@ -163,6 +169,8 @@ function buildStatic(): MeshBuilder {
   for (const bl of OSM.buildings) extrude(b, bl, hidden.has(bl.id) || !!bl.custom);
   for (const lm of OSM.landmarkModels) if (lm.model === 'peter-jones') buildPeterJones(b, lm);
   if (OSM.square) buildSloaneSquare(b, OSM.square);
+  // Sloane Square perimeter: individual reconstructions replace the generic extrusions of their footprints
+  if (OSM.square) squareSigns = buildSquareBuildings(b, OSM.buildings, OSM.squareRoofs ?? {}, OSM.square.ring).signs;
   // Decorative trees inside green spaces (positions are not sourced; deterministic scatter)
   const rand = rng(51491);
   for (const a of OSM.areas) {
@@ -196,7 +204,8 @@ function labels(): MapLabelDef[] {
   for (const m of OSM.landmarks) {
     // Lay the name on the landmark's own roof, or on the ground for squares and parks.
     const roof = OSM.buildings.find((bl) => pointInRing(m.x, m.z, bl.rings[0]));
-    let y = roof?.custom === 'peter-jones' ? UPPER_TOP + 1.3 : roof ? roof.h + 0.6 : Y.main + 0.4;
+    // reconstructed square buildings are taller than their footprint height (roofs, gables, turrets)
+    let y = roof?.custom === 'peter-jones' ? UPPER_TOP + 1.3 : roof?.custom?.startsWith('square:') ? (SQUARE_LABEL_Y[roof.custom] ?? roof.h + 8) : roof ? roof.h + 0.6 : Y.main + 0.4;
     let { x, z } = m;
     // The fountain's name lies on the paving beside it rather than through the statue.
     let size = 9.5;
@@ -237,5 +246,10 @@ export const osmMap: GameMap = {
   legacyPlotMap: OSM.legacyPlotMap,
   previousPlotMap: OSM.previousPlotMap,
   nature: OSM.square ? () => buildSquareNature(OSM.square!) : undefined,
-  decals: () => OSM.landmarkModels.filter((m) => m.model === 'peter-jones').flatMap((m) => peterJonesDecals(m)),
+  decals: () => {
+    const out = OSM.landmarkModels.filter((m) => m.model === 'peter-jones').flatMap((m) => peterJonesDecals(m));
+    const sq = squareSignDecal(squareSigns);
+    if (sq) out.push(sq);
+    return out;
+  },
 };
