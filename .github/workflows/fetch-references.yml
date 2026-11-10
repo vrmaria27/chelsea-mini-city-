@@ -16,7 +16,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node scripts/refs/fetch-commons.mjs references/sloane-square
+      - run: node scripts/refs/fetch-commons-buildings.mjs references/square-buildings
+      - run: node scripts/refs/fetch-commons.mjs references/square-buildings buildings
       - name: Commit references
         run: |
           git config user.name "github-actions[bot]"
