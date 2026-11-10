@@ -319,3 +319,12 @@ test('static hosting paths stay relative and the deployment workflow is unchange
   assert.match(wf, /npm run build|npm run check/);
   assert.match(wf, /dist/);
 });
+
+test('visibility tiles keep every static triangle exactly once', async () => {
+  const { splitTiles } = await import('../src/view/scene');
+  const data = osmMap.buildStatic().toFloat32();
+  const tiles = splitTiles(data, osmMap.half, 4);
+  assert.equal(tiles.reduce((n, t) => n + t.data.length, 0), data.length);
+  assert.ok(tiles.length > 8 && tiles.length <= 16);
+  for (const t of tiles) assert.ok(t.min.every((v, i) => v <= t.max[i]));
+});

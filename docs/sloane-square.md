@@ -2,7 +2,7 @@
 
 The central public space of Sloane Square is modelled from OpenStreetMap geometry (positions) and
 original procedural modelling informed by openly licensed photographs (shapes, proportions, colours).
-No photograph, texture or third-party model is embedded in the game. The leaf texture is drawn
+No photograph, texture or third-party model is embedded in the app. The leaf texture is drawn
 procedurally at start-up.
 
 ## Geographic data
@@ -23,7 +23,7 @@ Data © OpenStreetMap contributors, ODbL 1.0.
 
 ## Reference photographs (Wikimedia Commons)
 
-Viewed for modelling only; not redistributed in the game.
+Viewed for modelling only; not redistributed in the app.
 
 | # | Shows | Author | Licence | Date |
 |---|---|---|---|---|
@@ -167,4 +167,4 @@ canopies cover, not by alpha testing. **Quest 3 frame rate has not been measured
 - [ ] The fountain's water moves subtly. The overflow sheet and jet read as water, not as solid geometry.
 - [ ] Low detail keeps the trees in place with the same overall shapes.
 - [ ] Frame rate feels smooth when the square fills the view at the largest model size (use the OVR Metrics Tool for numbers).
-- [ ] Building on development sites, panels and controller rays behave as before; the square can't be built on.
+- [ ] At street level the square is walkable; the pool, trees, lamps and memorial refuse teleports.

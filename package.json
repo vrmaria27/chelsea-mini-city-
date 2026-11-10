@@ -2,7 +2,7 @@
   "name": "chelsea-mini-city",
   "version": "0.1.0",
   "private": true,
-  "description": "A cosy tabletop city-builder on a real (OpenStreetMap) map of Chelsea, for Meta Quest 3 (WebXR) with a desktop fallback.",
+  "description": "Explore a reconstruction of Sloane Square and King's Road, Chelsea, as a miniature and at street level, on Meta Quest 3 (WebXR) and desktop.",
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev.mjs",

@@ -3,7 +3,7 @@
 Sixteen frontages around Sloane Square are rebuilt as individual models
 (`src/map/landmarks/squareBuildings.ts`, using `facadeKit.ts`). Each model replaces only the
 generic extrusion of its own OpenStreetMap footprint. Peter Jones, the central square, the fountain,
-the trees, the streets and all development sites are unchanged.
+the trees and the streets are unchanged.
 
 Sources:
 - **Footprints:** OpenStreetMap (ODbL): `data/osm/raw.json`, plus `data/osm/square-buildings.json` for multipolygon member geometry.
@@ -109,10 +109,11 @@ no numeric "realism" score.
 | 28–31 | Model from text | 4 units, end gables with attic windows, central dormers, bays, No. 31 stone front | **no photo**: proportions estimated |
 | Holy Trinity | Dedicated model | orientation; banded west front; great window; two great turrets with lanterns and spirelets; aisle turrets; crenellations; pointed doorways; nave roof; railings | tracery and turret detail simplified; side elevations plainer than the real ones |
 
-## Development sites
+## Former development sites
 
-No development site touches the square or any reconstructed footprint (all are more than 30 m away), so
-there was no conflict between reconstruction and gameplay. Sites, saves and player buildings are untouched.
+The city-builder's fictional sites never touched the square or any reconstructed footprint (all were more
+than 30 m away). In Chelsea Explorer the sites are gone and their 32 footprints are plain masses again
+(see [explorer.md](explorer.md#restored-development-sites)).
 
 ## Performance and level of detail
 
@@ -135,4 +136,4 @@ there was no conflict between reconstruction and gameplay. Sites, saves and play
 - [ ] Nothing flickers (z-fighting) on façades, cornices or signs when moving your head. Check the Royal Court and the hotel fascia.
 - [ ] Turrets and chimneys look right from both eyes and don't shimmer at the tabletop distance.
 - [ ] Frame rate feels smooth looking across the square at the largest model size (use OVR Metrics for numbers).
-- [ ] Building, inspecting and upgrading on development sites work as before. Controller rays aimed at the new buildings don't select anything.
+- [ ] At street level, the façades hold up at eye height (see the Explorer checklist in [explorer.md](explorer.md#manual-quest-3-checklist)).

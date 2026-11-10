@@ -98,7 +98,7 @@ export class ExplorePanel {
     const settings: [Action, string, boolean][] = [
       ['labels', `Labels ${s.labels ? 'on' : 'off'}`, s.labels],
       ['lowDetail', `Low detail ${s.lowDetail ? 'on' : 'off'}`, s.lowDetail],
-      ['reducedMotion', `Calm ${s.reducedMotion ? 'on' : 'off'}`, s.reducedMotion],
+      ['reducedMotion', `Less motion ${s.reducedMotion ? 'on' : 'off'}`, s.reducedMotion],
       ['snap', `Snap ${s.snapTurnDeg}°`, false],
       ['seated', `Seated ${s.seated ? 'on' : 'off'}`, s.seated],
     ];

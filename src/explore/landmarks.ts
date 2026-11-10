@@ -41,9 +41,9 @@ export const LANDMARKS: readonly Landmark[] = [
   },
   {
     id: 'way/28682626', name: 'Peter Jones',
-    description: 'Department store of the John Lewis Partnership, built 1932–36 to designs by William Crabtree of Slater, Crabtree and Moberly. Its glass curtain wall was the first modern-movement use of one in Britain. Grade II* listed.',
+    description: 'A 1930s department store of the John Lewis Partnership, designed by William Crabtree with Slater and Moberly. Its glass curtain wall was the first modern-movement use of one in Britain. Grade II* listed.',
     x: 78.7, z: -124.5, pinY: 30, street: { x: 153, z: -146, yaw: 1.826 }, pitch: 0.22,
-    sources: [WIKI('Peter_Jones_%26_Partners', 'Peter Jones & Partners')],
+    sources: [WIKI('Peter_Jones_%26_Partners', 'Peter Jones & Partners'), HE(1226626, 'Peter Jones Store')],
   },
   {
     id: 'way/147249460', name: 'Royal Court Theatre',
