@@ -117,6 +117,46 @@ Progress, chapters and preferences save to the browser's local storage after eve
 
 The map was **not** compared side by side with Google Maps by me. Use the top-down screenshot above (or press **Map view** in the game) to compare it yourself.
 
+## Peter Jones model
+
+Peter Jones (Grade II*, 1936–39, W. Crabtree with Slater & Moberly and C. H. Reilly) has a custom landmark model (`src/map/landmarks/peterJones.ts`), replacing its generic extrusion. It has the stable id `landmark:peter-jones`.
+
+![Peter Jones from Sloane Square](docs/peter-jones-curve.jpg)
+
+**References used:**
+- Historic England listing 1226626, via https://britishlistedbuildings.co.uk/101226626-peter-jones-store-royal-hospital-ward (text).
+- https://modernism-in-architecture.org/buildings/peter-jones/ (text).
+- Panel size and panel counts as supplied by the project owner, citing https://awards.mediaarchitecture.org/mab/project/363.
+- Four reference photos supplied by the project owner: the corner from Sloane Square (two recent, one older), and the King's Road side from Sloane Square.
+- The photos were used for appearance only. No images or textures from them are in the game; all geometry and materials are original.
+
+**Fitted to the real map:**
+- The footprint is OSM way 28682626, used unsimplified.
+- OSM part 532097395 (white, 7 storeys) is the upper storey with the rounded drum.
+- Part 532534275 confirms the facade strip along King's Road, the curve and Sloane Square.
+- The modelled frontage is the run of outline edges that front King's Road and Sloane Square (118 m: 74.5 m straight, a 22 m curve, then 21 m). The importer detects it.
+- The curve is smoothed but stays within 9 cm of the OSM outline. The gentle reverse bend just before the curve is in the OSM data and is kept.
+- The footprint and 25 Cadogan Gardens (way 1186000571, listed as part of the store) are protected. Plot generation can never use them, and tests check that.
+- The canopy (2.2 m) and slab (1.2 m) overhang the pavement only.
+
+| | Status |
+|---|---|
+| Curved corner at King's Road / Sloane Square, overall mass and footprint | **Observed** (OSM outline + photos) |
+| Five window rows above the canopy: each a pale spandrel panel then two glazed panels, 965 × 1245 mm modules, with gold/bronze vertical mullions dominating | **Observed** (photos; panel size supplied). Mullions are placed at the uniform module; Crabtree's deliberate bay tapering is not modelled |
+| Plate-glass ground floor under a dark cantilevered canopy with a bronze band | **Observed** (listing, photos) |
+| "PETER JONES & PARTNERS" on the canopy band around the curve | **Observed** (photos 1 and 4); letter style approximate |
+| Thick white top slab sweeping up in an S-curve toward the corner, recessed glazed storey beneath, tubular railings on top | **Observed** (photos 1, 3, 4; listing); the rise's exact start and end points are estimated |
+| White upper storey with rounded drum and railings | **Observed** (photos; OSM part 532097395) |
+| "PETER JONES" letters on white panels on the Sloane Square face | **Observed** in the older photo and the listing; may differ today (not visible in the recent photo) |
+| White stair tower with a column of small windows; more muted extension to its west along King's Road | **Observed** (photos 1, 2; modernism-in-architecture.org); position along King's Road estimated |
+| Storey heights (ground 4.6 m, canopy to 5.8 m, 3.735 m per row, slab 25.5 → 28.2 m, top ≈ 32.4 m) | **Approximate**, from the panel module and photo proportions |
+| Symons Street and Cadogan Gardens elevations, roofs | **Approximate** (not in the references): plain cream walls with window bands |
+| Glass reflections | Stylised: per-panel tint variation only (no real-time reflections) |
+
+**Cost:** about 14,000 triangles merged into the existing single static draw call. Two small sign textures (2048 × 96 and 1024 × 80 px) are drawn as decals.
+
+**Not done:** no side-by-side comparison against Google Maps or Street View, and no headset testing. The checks were renders compared with the supplied photos (`docs/peter-jones-*.jpg`).
+
 ## Install, run, build
 
 Requires **Node.js 20+**.
@@ -155,6 +195,7 @@ Open the printed `https://192.168.x.x:5173/` on the Quest and accept the self-si
 Not yet verified on a headset. Please check:
 
 - [ ] Page loads in the Quest Browser over HTTPS and shows **Enter VR**. An older save moves to the real map with its buildings intact (message shown).
+- [ ] Peter Jones is recognisable from the tabletop (curved corner, white top, gold-striped glazing) and holds up when you lean in close.
 - [ ] The real street layout is recognisable at tabletop scale: King's Road, Sloane Square, Duke of York Square and the street names are readable. The "N" arrow on the plinth points north.
 - [ ] **Map view** turns the model north-away and tilts it toward you without moving your viewpoint; **Tabletop view** returns it.
 - [ ] The table appears in front of you at a comfortable height, **standing** and **seated** (use *Reset view* after sitting down). The menu panel is on the left and the inspector on the right, both readable at arm's length.

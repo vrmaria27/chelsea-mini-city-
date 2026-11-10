@@ -4,10 +4,11 @@ import data from './osm/chelsea-osm.json';
 import type { GameMap, LifePath, MapLabelDef, PlotDef } from './types';
 import { MeshBuilder, hex, rng, shade, type RGB } from '../engine/geometry';
 import { P, tree } from '../game/cityModel';
+import { UPPER_TOP, buildPeterJones, peterJonesDecals, type LandmarkModelData } from './landmarks/peterJones';
 
 interface OsmRoad { id: number; name: string | null; hw: string; cls: 'main' | 'street' | 'service' | 'pedestrian' | 'path'; w: number; pts: number[]; sidewalk?: boolean }
 interface OsmArea { id: string; kind: 'green' | 'plaza' | 'carriageway' | 'parking'; name: string | null; ring: number[]; tris: number[] }
-interface OsmBuilding { id: string; h: number; hSrc: string; type: string; name: string | null; protected: boolean; rings: number[][]; tris: number[] }
+interface OsmBuilding { id: string; h: number; hSrc: string; type: string; name: string | null; protected: boolean; rings: number[][]; tris: number[]; custom?: string; landmarkId?: string }
 interface OsmData {
   meta: Record<string, unknown> & { half: number; mapVersion: number; title: string; attribution: string; copyrightUrl: string; retrieved: string; osmBase: string; centre: { lat: number; lon: number }; bbox: Record<string, number> };
   roads: OsmRoad[];
@@ -16,6 +17,7 @@ interface OsmData {
   landmarks: { name: string; x: number; z: number }[];
   labels: { text: string; x: number; z: number; angle: number; maxLen: number; cls: string }[];
   plots: (PlotDef & { replaces: string[] })[];
+  landmarkModels: (LandmarkModelData & { model: string; name: string })[];
   legacyPlotMap: Record<string, string>;
   walkPaths: number[][];
   drivePaths: { name: string; w: number; pts: number[] }[];
@@ -154,7 +156,9 @@ function buildStatic(): MeshBuilder {
   const order: OsmRoad['cls'][] = ['path', 'pedestrian', 'service', 'street', 'main'];
   for (const cls of order) for (const r of OSM.roads) if (r.cls === cls) ribbon(b, r.pts, r.w, Y[cls], ROAD_COL[cls]);
   // Buildings (footprints under development plots are hidden)
-  for (const bl of OSM.buildings) extrude(b, bl, hidden.has(bl.id));
+  // Landmarks with a custom model replace their generic extrusion (no duplicate façades).
+  for (const bl of OSM.buildings) extrude(b, bl, hidden.has(bl.id) || !!bl.custom);
+  for (const lm of OSM.landmarkModels) if (lm.model === 'peter-jones') buildPeterJones(b, lm);
   // Decorative trees inside green spaces (positions are not sourced; deterministic scatter)
   const rand = rng(51491);
   for (const a of OSM.areas) {
@@ -188,7 +192,7 @@ function labels(): MapLabelDef[] {
   for (const m of OSM.landmarks) {
     // Lay the name on the landmark's own roof, or on the ground for squares and parks.
     const roof = OSM.buildings.find((bl) => pointInRing(m.x, m.z, bl.rings[0]));
-    const y = roof ? roof.h + 0.6 : Y.main + 0.4;
+    const y = roof?.custom === 'peter-jones' ? UPPER_TOP + 1.3 : roof ? roof.h + 0.6 : Y.main + 0.4;
     out.push({ text: m.name, x: m.x, z: m.z, y, angle: 0, size: 9.5, color: '#2e2a26', outline: 'rgba(255,255,255,0.92)', bold: true, tier: 'major' });
   }
   const H = HALF;
@@ -220,4 +224,5 @@ export const osmMap: GameMap = {
     'Road widths without a width tag, building heights without height/levels tags, façade colours and trees are stylised estimates. ' +
     'Development plots are fictional redevelopment opportunities, not claims that real properties are vacant or available.',
   legacyPlotMap: OSM.legacyPlotMap,
+  decals: () => OSM.landmarkModels.filter((m) => m.model === 'peter-jones').flatMap((m) => peterJonesDecals(m)),
 };

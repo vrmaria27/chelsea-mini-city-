@@ -146,6 +146,13 @@ function buildingHeight(t, id) {
   if (['church', 'chapel'].includes(type)) return { h: 18, src: 'estimate' };
   return { h: (3 + (id % 3)) * LEVEL_H + 1, src: 'estimate' }; // 3–5 storeys, from the OSM id
 }
+// Landmarks with custom models (stable ids). Their footprints are protected from plot generation and
+// the generic extrusion is replaced in game by the custom model.
+const CUSTOM_LANDMARKS = {
+  28682626: { id: 'landmark:peter-jones', model: 'peter-jones' },
+};
+// Other footprints that belong to a protected landmark (Historic England lists 25 Cadogan Gardens as part of Peter Jones).
+const PROTECTED_WAYS = new Set([28682626, 1186000571]);
 const PROTECTED_TAGS = (t) => !!(t.name && (t.building === 'church' || t.building === 'school' || t.building === 'retail' || t.tourism || t.amenity || t.historic)) || ['church', 'chapel', 'cathedral', 'train_station', 'transportation'].includes(t.building) || /Theatre|Gallery|Church|Hall|Station/.test(t.name ?? '');
 for (const e of [...ways, ...rels]) {
   const t = e.tags ?? {};
@@ -164,18 +171,110 @@ for (const e of [...ways, ...rels]) {
       triFail++;
       report.warnings.push(`building ${e.type}/${e.id} triangulation mismatch (${trisArea(tris).toFixed(1)} vs ${a.toFixed(1)})`);
     }
+    const custom = e.type === 'way' ? CUSTOM_LANDMARKS[e.id] : undefined;
     buildings.push({
       id: `${e.type[0]}${e.id}`,
       osmId: e.id,
+      ...(custom ? { custom: custom.model, landmarkId: custom.id } : {}),
       h: Math.round(h * 10) / 10,
       hSrc: src,
       type: t.building,
       name: t.name ?? null,
-      protected: PROTECTED_TAGS(t),
+      protected: PROTECTED_TAGS(t) || PROTECTED_WAYS.has(e.id),
       rings: [o, ...holes].map((r) => r.flatMap((p) => [round1(p[0]), round1(p[1])])),
       tris: tris.map(round1),
       area: Math.round(a),
     });
+  }
+}
+
+// ---- Custom landmark model data: Peter Jones -------------------------------------------------
+// Footprint = OSM way 28682626 (unsimplified). Parts used: 532097395 (white 7-storey upper block with
+// the rounded drum). The facade run is the contiguous set of outline edges fronting King's Road and
+// Sloane Square; the recessed storey outline is that run offset inward (computed here, offline).
+const landmarkModels = [];
+{
+  const way = ways.find((w) => w.id === 28682626);
+  const upperWay = ways.find((w) => w.id === 532097395);
+  if (!way || !upperWay) report.warnings.push('Peter Jones footprint or parts missing');
+  else {
+    let ring = openRing(way.geometry.map(P));
+    if (ringArea(ring) > 0) ring = ring.reverse(); // negative orientation: outward normal = left of travel… (see renderer)
+    const segsOf = (names) => roads.filter((r) => names.includes(r.name) && r.cls === 'main').flatMap((r) => { const o = []; for (let i = 0; i + 3 < r.pts.length; i += 2) o.push([[r.pts[i], r.pts[i + 1]], [r.pts[i + 2], r.pts[i + 3]]]); return o; });
+    const front = segsOf(["King's Road", 'Sloane Square']);
+    const distTo = (p, a, b) => { const dx = b[0] - a[0], dz = b[1] - a[1], l = dx * dx + dz * dz || 1; const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / l)); return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dz); };
+    const n = ring.length;
+    const isFront = ring.map((a, i) => {
+      const b = ring[(i + 1) % n];
+      const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      return Math.min(...front.map(([p, q]) => distTo(m, p, q))) < 16;
+    });
+    // longest cyclic run of fronting edges
+    let best = { start: 0, len: 0 };
+    for (let i = 0; i < n; i++) {
+      if (!isFront[i] || isFront[(i + n - 1) % n]) continue;
+      let k = 0;
+      while (k < n && isFront[(i + k) % n]) k++;
+      if (k > best.len) best = { start: i, len: k };
+    }
+    // Trim tiny jogs (< 3 m) at either end of the run: they belong to the side walls.
+    while (best.len > 2) {
+      const a = ring[best.start % n], b = ring[(best.start + 1) % n];
+      if (Math.hypot(b[0] - a[0], b[1] - a[1]) >= 3) break;
+      best.start++; best.len--;
+    }
+    while (best.len > 2) {
+      const a = ring[(best.start + best.len - 1) % n], b = ring[(best.start + best.len) % n];
+      if (Math.hypot(b[0] - a[0], b[1] - a[1]) >= 3) break;
+      best.len--;
+    }
+    const facade = [];
+    for (let k = 0; k <= best.len; k++) facade.push(ring[(best.start + k) % n]);
+    // Smooth the curved corner (Chaikin on vertices that turn > 6°); straight runs and ends untouched.
+    let f = facade;
+    for (let it = 0; it < 3; it++) {
+      const out = [f[0]];
+      for (let i = 1; i < f.length - 1; i++) {
+        const a = f[i - 1], b = f[i], c = f[i + 1];
+        const t1 = Math.atan2(b[1] - a[1], b[0] - a[0]), t2 = Math.atan2(c[1] - b[1], c[0] - b[0]);
+        let turn = Math.abs(t2 - t1); if (turn > Math.PI) turn = 2 * Math.PI - turn;
+        if (turn < (6 * Math.PI) / 180) { out.push(b); continue; }
+        out.push([0.75 * b[0] + 0.25 * a[0], 0.75 * b[1] + 0.25 * a[1]], [0.75 * b[0] + 0.25 * c[0], 0.75 * b[1] + 0.25 * c[1]]);
+      }
+      out.push(f[f.length - 1]);
+      f = out;
+    }
+    // Inward offset of the facade (miter, per vertex) for the recessed fifth storey.
+    const interior = (p) => pointInPolygon(p, ring);
+    const offsetLine = (line, d) => line.map((p, i) => {
+      const a = line[Math.max(0, i - 1)], b = line[Math.min(line.length - 1, i + 1)];
+      const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz) || 1;
+      let nx = -dz / l, nz = dx / l;
+      if (!interior([p[0] + nx * 1.5, p[1] + nz * 1.5])) { nx = -nx; nz = -nz; } // point inward
+      return [p[0] + nx * d, p[1] + nz * d];
+    });
+    const RECESS = 2.6;
+    const inset = offsetLine(f, RECESS);
+    const back = [];
+    for (let k = best.len + 1; k < n; k++) back.push(ring[(best.start + k) % n]);
+    const recessRing = [...inset, ...back];
+    const upper = openRing(upperWay.geometry.map(P));
+    const fl = (r) => r.flatMap((p) => [Math.round(p[0] * 100) / 100, Math.round(p[1] * 100) / 100]);
+    landmarkModels.push({
+      id: 'landmark:peter-jones',
+      name: 'Peter Jones',
+      model: 'peter-jones',
+      osm: { footprint: 'way/28682626', parts: ['way/532097395', 'way/532534275', 'way/532097394'], alsoProtected: ['way/1186000571'] },
+      ring: fl(ring),
+      ringTris: triangulate(ring).map(round1),
+      facade: fl(f),
+      recessRing: fl(recessRing),
+      recessTris: triangulate(recessRing).map(round1),
+      upperRing: fl(upper),
+      upperTris: triangulate(upper).map(round1),
+    });
+    const fLen = f.reduce((s2, p, i) => (i ? s2 + Math.hypot(p[0] - f[i - 1][0], p[1] - f[i - 1][1]) : 0), 0);
+    report.peterJones = { facadeVertices: f.length, facadeLength: Math.round(fLen * 10) / 10, start: f[0].map(round1), end: f[f.length - 1].map(round1) };
   }
 }
 
@@ -490,11 +589,13 @@ const out = {
   landmarks,
   labels,
   plots,
+  landmarkModels,
   legacyPlotMap,
   walkPaths,
   drivePaths,
 };
 mkdirSync(dirname(outFile), { recursive: true });
 writeFileSync(outFile, JSON.stringify(out));
+console.log('peterJones', JSON.stringify(report.peterJones));
 console.log(JSON.stringify({ stats, checks, orientation: orient, legacyPlotMap, warnings: report.warnings.slice(0, 15), warningCount: report.warnings.length }, null, 1));
 console.log(`Wrote ${outFile} (${(JSON.stringify(out).length / 1024).toFixed(0)} KiB)`);

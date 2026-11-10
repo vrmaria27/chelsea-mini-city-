@@ -55,6 +55,8 @@ export interface GameMap {
   /** Letter height for plot numbers (metres). */
   plotLabelSize?: number;
   notes: string;
+  /** Textured details (e.g. landmark signage) in map space, drawn with the model. */
+  decals?: () => { canvas: HTMLCanvasElement; data: Float32Array }[];
   /** Old plot id → this map's plot id (for migrating saves from the legacy map). */
   legacyPlotMap?: Record<string, string>;
 }

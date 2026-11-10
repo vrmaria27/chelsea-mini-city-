@@ -70,6 +70,7 @@ export class CityScene {
   private staticMesh: Mesh;
   private plotsMesh: Mesh;
   private labelMesh: Mesh;
+  private decals: { tex: WebGLTexture; mesh: Mesh }[] = [];
   private minorLabelMesh: Mesh;
   /** Minor street labels are hidden when the model is far away (normalised distance). */
   showMinorLabels = true;
@@ -138,6 +139,7 @@ export class CityScene {
     this.labelTex = r.createTexture(this.labels.canvas);
     this.labelMesh = r.texMesh(this.labels.major);
     this.minorLabelMesh = r.texMesh(this.labels.minor);
+    this.decals = (map.decals?.() ?? []).map((d) => ({ tex: r.createTexture(d.canvas), mesh: r.texMesh(d.data) }));
     this.plotLabelMesh = r.texMesh(new Float32Array(0));
     this.frameMesh = r.litMesh(plotFrame().toFloat32());
     this.ringMesh = r.litMesh(radiusRing(RULES.effectRadius).toFloat32());
@@ -298,6 +300,7 @@ export class CityScene {
     r.drawLit(this.tableMesh, this.anchorM);
     r.drawLit(this.staticMesh, this.modelM);
     r.drawLit(this.plotsMesh, this.modelM);
+    for (const d of this.decals) r.drawTex(d.mesh, this.modelM, d.tex);
     if (!this.lowDetail) this.life.draw(this.modelM);
 
     for (const p of pointers) {

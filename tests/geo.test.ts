@@ -289,3 +289,54 @@ test('the app source makes no network requests for map data', () => {
     assert.ok(!/\bfetch\(|XMLHttpRequest|overpass|tile\.openstreetmap|api\.openstreetmap/i.test(src), f);
   }
 });
+
+// ---- Peter Jones landmark -------------------------------------------------------------------------
+
+test('Peter Jones has a stable protected landmark id and its generic extrusion is replaced', () => {
+  const b = OSM.buildings.find((x) => x.id === 'w28682626') as (typeof OSM.buildings)[number] & { custom?: string; landmarkId?: string };
+  assert.ok(b, 'OSM way 28682626 present');
+  assert.equal(b.custom, 'peter-jones');
+  assert.equal(b.landmarkId, 'landmark:peter-jones');
+  assert.equal(b.protected, true);
+  assert.equal(OSM.buildings.find((x) => x.id === 'w1186000571')?.protected, true, '25 Cadogan Gardens (listed as part of the store) is protected');
+  const m = OSM.landmarkModels.find((x) => x.id === 'landmark:peter-jones');
+  assert.ok(m);
+});
+
+test('no development plot touches the Peter Jones footprint', () => {
+  const pj = ring(OSM.buildings.find((x) => x.id === 'w28682626')!.rings[0]);
+  const annex = ring(OSM.buildings.find((x) => x.id === 'w1186000571')!.rings[0]);
+  for (const p of osmMap.plots) {
+    assert.ok(!overlap(rect(p), pj), `${p.id} overlaps Peter Jones`);
+    assert.ok(!overlap(rect(p), annex), `${p.id} overlaps 25 Cadogan Gardens`);
+    assert.ok(!OSM.plots.find((q) => q.id === p.id)!.replaces.includes('w28682626'));
+  }
+});
+
+test("the modelled frontage runs along King's Road, round the corner, to Sloane Square", () => {
+  const m = OSM.landmarkModels[0];
+  const f = ring(m.facade);
+  const near = (pt: Pt, name: string) => Math.min(...OSM.roads.filter((r) => r.name === name && r.cls === 'main').flatMap((r) => { const q = ring(r.pts); return q.slice(1).map((b, i) => segDist(pt, q[i], b)); }));
+  assert.ok(near(f[0], "King's Road") < 16, 'starts on King\'s Road');
+  assert.ok(near(f[f.length - 1], 'Sloane Square') < 16, 'ends on Sloane Square');
+  let len = 0;
+  for (let i = 1; i < f.length; i++) len += Math.hypot(f[i][0] - f[i - 1][0], f[i][1] - f[i - 1][1]);
+  assert.ok(len > 100 && len < 140, `frontage ${len.toFixed(1)} m`);
+  // Corner smoothing keeps the frontage on the OSM outline (within 15 cm; measured max ≈ 9 cm).
+  const outline = ring(m.ring);
+  for (const p of f) assert.ok(Math.min(...outline.map((q, i) => segDist(p, q, outline[(i + 1) % outline.length]))) < 0.15);
+});
+
+test('Peter Jones canopy and slab overhang the pavement without entering another building', () => {
+  const m = OSM.landmarkModels[0];
+  const f = ring(m.facade);
+  const others = OSM.buildings.filter((b) => b.id !== 'w28682626').map((b) => ring(b.rings[0]));
+  for (let i = 0; i + 1 < f.length; i++) {
+    const a = f[i], b = f[i + 1];
+    const l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const n: Pt = [-(b[1] - a[1]) / l, (b[0] - a[0]) / l]; // outward = left of travel
+    const mid: Pt = [(a[0] + b[0]) / 2 + n[0] * 2.3, (a[1] + b[1]) / 2 + n[1] * 2.3];
+    assert.ok(!inPoly(mid, ring(m.ring)), 'outward normal points out of the building');
+    for (const o of others) assert.ok(!inPoly(mid, o), `canopy edge at segment ${i} would enter another building`);
+  }
+});
