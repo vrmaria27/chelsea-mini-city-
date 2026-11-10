@@ -1,0 +1,27 @@
+# Downloads openly licensed (Wikimedia Commons) reference photos for modelling into references/.
+# Runs only on the 'references' branch; photos are never part of the deployed game.
+name: Fetch reference photos
+on:
+  workflow_dispatch:
+  push:
+    branches: [references]
+    paths: [scripts/refs/**, .github/workflows/fetch-references.yml]
+permissions:
+  contents: write
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/refs/fetch-commons.mjs references/sloane-square
+      - name: Commit references
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add references
+          git diff --cached --quiet && echo "No change" && exit 0
+          git commit -m "Reference photos from Wikimedia Commons (see references/sloane-square/index.json for authors and licences)"
+          git push
