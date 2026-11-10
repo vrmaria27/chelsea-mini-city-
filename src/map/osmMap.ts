@@ -1,16 +1,21 @@
 // The geographically grounded map, built from the bundled OpenStreetMap extract
 // (src/map/osm/chelsea-osm.json, produced by scripts/osm/process.mjs). No runtime requests.
 import data from './osm/chelsea-osm.json';
-import type { GameMap, LifePath, MapLabelDef, PlotDef } from './types';
+import type { MapLabelDef, SceneMap } from './types';
 import { MeshBuilder, hex, rng, shade, type RGB } from '../engine/geometry';
-import { P, tree } from '../game/cityModel';
+import { P, tree } from './palette';
 import { UPPER_TOP, buildPeterJones, peterJonesDecals, type LandmarkModelData } from './landmarks/peterJones';
 import { SQUARE_Y, buildSloaneSquare, buildSquareNature, type SquareData } from './landmarks/sloaneSquare';
 import { buildSquareBuildings, squareSignDecal, type RoofInsets, type SignQuad } from './landmarks/squareBuildings';
 
-interface OsmRoad { id: number; name: string | null; hw: string; cls: 'main' | 'street' | 'service' | 'pedestrian' | 'path'; w: number; pts: number[]; sidewalk?: boolean }
-interface OsmArea { id: string; kind: 'green' | 'plaza' | 'carriageway' | 'parking'; name: string | null; ring: number[]; tris: number[] }
-interface OsmBuilding { id: string; h: number; hSrc: string; type: string; name: string | null; protected: boolean; rings: number[][]; tris: number[]; custom?: string; landmarkId?: string }
+export interface OsmRoad { id: number; name: string | null; hw: string; cls: 'main' | 'street' | 'service' | 'pedestrian' | 'path'; w: number; pts: number[]; sidewalk?: boolean }
+export interface OsmArea { id: string; kind: 'green' | 'plaza' | 'carriageway' | 'parking'; name: string | null; ring: number[]; tris: number[] }
+export interface OsmBuilding {
+  id: string; h: number; hSrc: string; type: string; name: string | null; protected: boolean; rings: number[][]; tris: number[];
+  custom?: string; landmarkId?: string;
+  /** Footprint that the old city-builder had cleared; now an approximate generic mass again. */
+  formerSite?: boolean;
+}
 interface OsmData {
   meta: Record<string, unknown> & { half: number; mapVersion: number; title: string; attribution: string; copyrightUrl: string; retrieved: string; osmBase: string; centre: { lat: number; lon: number }; bbox: Record<string, number> };
   roads: OsmRoad[];
@@ -18,12 +23,7 @@ interface OsmData {
   buildings: OsmBuilding[];
   landmarks: { name: string; x: number; z: number }[];
   labels: { text: string; x: number; z: number; angle: number; maxLen: number; cls: string }[];
-  plots: (PlotDef & { replaces: string[] })[];
   landmarkModels: (LandmarkModelData & { model: string; name: string })[];
-  legacyPlotMap: Record<string, string>;
-  previousPlotMap: Record<string, string>;
-  walkPaths: number[][];
-  drivePaths: { name: string; w: number; pts: number[] }[];
   square: SquareData | null;
   squareRoofs: Record<string, RoofInsets>;
 }
@@ -34,7 +34,7 @@ const MARGIN = 16; // plinth margin around the map (metres)
 const TITLE_MARGIN = 44; // extra plinth on the south (near) side for the title and attribution
 
 // Layer heights (map metres) keep coplanar layers apart without z-fighting at tabletop scale.
-const Y = { ground: 0, parking: 0.1, carriageway: 0.12, green: 0.15, plaza: 0.18, path: 0.22, pedestrian: 0.26, service: 0.3, street: 0.34, main: 0.38 };
+export const Y = { ground: 0, parking: 0.1, carriageway: 0.12, green: 0.15, plaza: 0.18, path: 0.22, pedestrian: 0.26, service: 0.3, street: 0.34, main: 0.38 };
 const ROAD_COL: Record<OsmRoad['cls'], RGB> = {
   main: hex('#858991'), street: hex('#979ba2'), service: hex('#b2aea5'), pedestrian: hex('#e6d9bd'), path: hex('#d6c7a6'),
 };
@@ -101,12 +101,24 @@ function ringArea(r: number[]): number {
   return a / 2;
 }
 
-/** Extruded footprint: outward-facing walls for the outer ring and courtyard walls for holes; flat roof. */
-function extrude(b: MeshBuilder, bl: OsmBuilding, hidden: boolean): void {
+/** Distance (m) from Sloane Square within which plain masses get window rows and a cornice line. */
+const DETAIL_RADIUS = 240;
+const GLASS = hex('#46525e');
+const SHOP_GLASS = hex('#39434d');
+
+/**
+ * Extruded footprint: outward-facing walls for the outer ring and courtyard walls for holes; flat
+ * roof. Near the square (`detail`), street-facing walls get simple window rows, a darker ground
+ * floor for shops and a pale cornice line so they do not read as blank boxes at eye level. Window
+ * positions are generic (one per 3.4 m bay and 3.2 m storey), not surveyed.
+ */
+function extrude(b: MeshBuilder, bl: OsmBuilding, hidden: boolean, detail = false, isParty?: (x: number, z: number) => boolean): void {
   if (hidden) return;
   const wall = wallColour(bl);
   const roof = shade(ROOF[hash(bl.id) % ROOF.length], 1);
+  const cornice = shade(wall, 1.22);
   const h = bl.h;
+  const shopType = bl.type === 'retail' || bl.type === 'commercial';
   bl.rings.forEach((ring, ri) => {
     // outer ring needs negative shoelace orientation for outward normals; holes the opposite
     const wantNegative = ri === 0;
@@ -117,10 +129,39 @@ function extrude(b: MeshBuilder, bl: OsmBuilding, hidden: boolean): void {
       const j = (i + 1) % n;
       const ax = r[i * 2], az = r[i * 2 + 1], bx = r[j * 2], bz = r[j * 2 + 1];
       b.quad([ax, 0, az], [bx, 0, bz], [bx, h, bz], [ax, h, az], wall);
+      if (!detail || ri !== 0) continue;
+      const len = Math.hypot(bx - ax, bz - az);
+      if (len < 3.5) continue;
+      const ux = (bx - ax) / len, uz = (bz - az) / len;
+      // outward normal (quad winding faces outward); skip party walls against a neighbour
+      let nx = uz, nz = -ux;
+      const mx = (ax + bx) / 2, mz = (az + bz) / 2;
+      if (pointInRing(mx + nx * 0.4, mz + nz * 0.4, ring)) { nx = -nx; nz = -nz; }
+      if (isParty?.(mx + nx * 0.8, mz + nz * 0.8)) continue;
+      const off = 0.06;
+      const P = (t: number, y: number, o = off): number[] => [ax + ux * t + nx * o, y, az + uz * t + nz * o];
+      const face = (t0: number, t1: number, y0: number, y1: number, col: RGB, o = off) => b.quad(P(t0, y0, o), P(t1, y0, o), P(t1, y1, o), P(t0, y1, o), col);
+      // cornice line under the roof edge
+      if (h > 6) face(0, len, h - 0.75, h - 0.3, cornice, 0.12);
+      const bays = Math.floor((len - 1.2) / 3.4);
+      if (bays < 1) continue;
+      const m = (len - bays * 3.4) / 2;
+      const floors = Math.max(1, Math.floor((h - 1.4) / 3.2));
+      for (let f = 0; f < floors; f++) {
+        const y0 = 1.0 + f * 3.2;
+        if (f === 0 && shopType) {
+          face(0.3, len - 0.3, 0.3, 3.0, SHOP_GLASS);
+          continue;
+        }
+        if (y0 + 1.9 > h - 0.8) break;
+        for (let k = 0; k < bays; k++) {
+          const c = m + 3.4 * (k + 0.5);
+          face(c - 0.62, c + 0.62, y0 + (f === 0 ? 0 : 0.2), y0 + 1.9, GLASS);
+        }
+      }
     }
   });
   flatTris(b, bl.tris, h, roof);
-  // thin parapet line on the roof edge for a crisper silhouette
 }
 
 function reverse(r: number[]): number[] {
@@ -129,7 +170,7 @@ function reverse(r: number[]): number[] {
   return out;
 }
 
-function pointInRing(x: number, z: number, r: number[]): boolean {
+export function pointInRing(x: number, z: number, r: number[]): boolean {
   let inside = false;
   const n = r.length / 2;
   for (let i = 0, j = n - 1; i < n; j = i++) {
@@ -152,21 +193,36 @@ let squareSigns: SignQuad[] = [];
 /** Label heights just above each reconstructed landmark's own roofline (map metres). */
 const SQUARE_LABEL_Y: Record<string, number> = { 'square:royal-court': 20.5, 'square:holy-trinity': 31.5, 'square:hotel': 26, 'square:station': 28 };
 
+/** Wooden model base, north arrow and lettering: miniature view only. */
+function buildPlinth(): MeshBuilder {
+  const b = new MeshBuilder();
+  const H = HALF;
+  b.box(-H - MARGIN, -16, -H - MARGIN, H + MARGIN, -1.52, H + TITLE_MARGIN, P.plinth);
+  b.flat(-H - MARGIN, -H - MARGIN, H + MARGIN, H + TITLE_MARGIN, -0.01, P.plinthTop);
+  northArrow(b, H - 18, H + 22, 0);
+  return b;
+}
+
 function buildStatic(): MeshBuilder {
   const b = new MeshBuilder();
   const H = HALF;
-  const hidden = new Set(OSM.plots.flatMap((p) => p.replaces));
-  // Plinth (wooden model base) and pavement-coloured ground
-  b.box(-H - MARGIN, -16, -H - MARGIN, H + MARGIN, -0.02, H + TITLE_MARGIN, P.plinth);
-  b.flat(-H - MARGIN, -H - MARGIN, H + MARGIN, H + TITLE_MARGIN, -0.01, P.plinthTop);
+  // Pavement-coloured ground (the plinth below it is drawn separately)
   b.box(-H, -1.5, -H, H, Y.ground, H, P.pavement);
   for (const a of OSM.areas) flatTris(b, a.tris, Y[a.kind], AREA_COL[a.kind]);
   // Roads: wider classes on top
   const order: OsmRoad['cls'][] = ['path', 'pedestrian', 'service', 'street', 'main'];
   for (const cls of order) for (const r of OSM.roads) if (r.cls === cls) ribbon(b, r.pts, r.w, Y[cls], ROAD_COL[cls]);
-  // Buildings (footprints under development plots are hidden)
-  // Landmarks with a custom model replace their generic extrusion (no duplicate façades).
-  for (const bl of OSM.buildings) extrude(b, bl, hidden.has(bl.id) || !!bl.custom);
+  // Buildings. Landmarks with a custom model replace their generic extrusion (no duplicate façades).
+  // Every other footprint, including the former game sites, is an extruded mass at its OSM height.
+  const sq = OSM.square;
+  const cx = sq ? 177 : 0, cz = sq ? -150 : 0;
+  const centre = (bl: OsmBuilding) => { const r = bl.rings[0]; let x = 0, z = 0; for (let i = 0; i < r.length; i += 2) { x += r[i]; z += r[i + 1]; } return [x / (r.length / 2), z / (r.length / 2)]; };
+  const near = OSM.buildings.filter((bl) => { const [x, z] = centre(bl); return Math.hypot(x - cx, z - cz) < DETAIL_RADIUS + 60; });
+  const isParty = (x: number, z: number) => near.some((o) => pointInRing(x, z, o.rings[0]));
+  for (const bl of OSM.buildings) {
+    const [x, z] = centre(bl);
+    extrude(b, bl, !!bl.custom, !!sq && Math.hypot(x - cx, z - cz) < DETAIL_RADIUS, isParty);
+  }
   for (const lm of OSM.landmarkModels) if (lm.model === 'peter-jones') buildPeterJones(b, lm);
   if (OSM.square) buildSloaneSquare(b, OSM.square);
   // Sloane Square perimeter: individual reconstructions replace the generic extrusions of their footprints
@@ -186,7 +242,6 @@ function buildStatic(): MeshBuilder {
       placed++;
     }
   }
-  northArrow(b, H - 18, H + 22, 0);
   return b;
 }
 
@@ -216,35 +271,25 @@ function labels(): MapLabelDef[] {
     out.push({ text: m.name, x, z, y, angle: m.name === 'Venus Fountain' && OSM.square ? -OSM.square.axis : 0, size, color: '#2e2a26', outline: 'rgba(255,255,255,0.92)', bold: true, tier: 'major' });
   }
   const H = HALF;
-  out.push({ text: 'Chelsea Mini City', x: -H + 120, z: H + 16, y: 0.05, angle: 0, size: 12, color: '#fbf3e6', outline: 'rgba(70,45,30,0.9)', bold: true, tier: 'plinth' });
+  out.push({ text: 'Chelsea Explorer', x: -H + 120, z: H + 16, y: 0.05, angle: 0, size: 12, color: '#fbf3e6', outline: 'rgba(70,45,30,0.9)', bold: true, tier: 'plinth' });
   out.push({ text: '© OpenStreetMap contributors · ODbL', x: -H + 120, z: H + 33, y: 0.05, angle: 0, size: 6, color: '#f1e4cf', outline: 'rgba(70,45,30,0.9)', tier: 'plinth' });
   out.push({ text: 'N', x: H - 18, z: H + 5, y: 0.3, angle: 0, size: 9, color: '#fbf3e6', outline: 'rgba(70,45,30,0.9)', bold: true, tier: 'plinth' });
-  out.push({ text: 'Development plots are fictional', x: H - 140, z: H + 22, y: 0.05, angle: 0, size: 6, color: '#f1e4cf', outline: 'rgba(70,45,30,0.9)', tier: 'plinth' });
   return out;
 }
 
-const walkPaths: LifePath[] = OSM.walkPaths.map((pts) => ({ pts, y: Y.path + 0.05 }));
-const drivePaths: LifePath[] = OSM.drivePaths.map((d) => ({ pts: d.pts, y: Y.main + 0.05 }));
-
-export const osmMap: GameMap = {
+export const osmMap: SceneMap = {
   id: 'chelsea-osm',
   version: OSM.meta.mapVersion,
   title: OSM.meta.title,
   half: HALF,
   baseScale: 0.0015, // 700 m → 1.05 m on the table
-  plots: OSM.plots.map(({ replaces, ...p }) => p),
   buildStatic,
+  buildPlinth,
   labels,
-  walkPaths,
-  drivePaths,
   attribution: { text: OSM.meta.attribution, url: OSM.meta.copyrightUrl },
-  plotLabelSize: 13,
   notes:
     `Streets, public spaces, building footprints and landmark positions come from OpenStreetMap (retrieved ${OSM.meta.retrieved.slice(0, 10)}). ` +
-    'Road widths without a width tag, building heights without height/levels tags, façade colours and trees are stylised estimates. ' +
-    'Development plots are fictional redevelopment opportunities, not claims that real properties are vacant or available.',
-  legacyPlotMap: OSM.legacyPlotMap,
-  previousPlotMap: OSM.previousPlotMap,
+    'Road widths without a width tag, building heights without height/levels tags, façade colours and trees outside Sloane Square are stylised estimates.',
   nature: OSM.square ? () => buildSquareNature(OSM.square!) : undefined,
   decals: () => {
     const out = OSM.landmarkModels.filter((m) => m.model === 'peter-jones').flatMap((m) => peterJonesDecals(m));

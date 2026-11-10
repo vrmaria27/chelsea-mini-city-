@@ -784,7 +784,7 @@ const stats = {
   roads: roads.length, roadsWithOsmWidth: roads.filter((r) => r.widthSource === 'osm').length, junctionVertices: junctionNodes,
   areas: areas.length, buildings: buildings.length, heightFromOsm, heightFromLevels, heightEstimated, triangulationWarnings: triFail,
   landmarks: landmarks.length, labels: labels.length, siteCandidates: siteCandidates.length, plots: plots.length,
-  hiddenFootprints: new Set(plots.flatMap((p) => p.replaces)).size, plotRoadViolations, plotOverlap,
+  restoredFootprints: new Set(plots.flatMap((p) => p.replaces)).size, plotRoadViolations, plotOverlap,
 };
 
 // ---- Sloane Square perimeter: roof insets for the custom façade models --------------------------
@@ -825,11 +825,12 @@ for (const bl of buildings) {
   squareRoofs[bl.id] = insets;
 }
 
+const formerSiteIds = new Set(plots.flatMap((p) => p.replaces));
 const out = {
   meta: {
     mapId: MAP_ID,
     mapVersion: MAP_VERSION,
-    title: 'Chelsea: King\'s Road, Duke of York Square & Sloane Square',
+    title: 'Chelsea Explorer: Sloane Square, King\'s Road & Duke of York Square',
     source: raw.source,
     endpoint: raw.endpoint,
     licence: 'Open Database License (ODbL) 1.0',
@@ -851,20 +852,26 @@ const out = {
   },
   roads: roads.map(({ nodes, ...r }) => r),
   areas,
-  buildings: buildings.map(({ poly, osmId, area, ...b }) => b),
+  // Footprints that the old city-builder cleared for its fictional sites are ordinary buildings
+  // again; `formerSite` only records that their mass is a generic extrusion (see docs/explorer.md).
+  buildings: buildings.map(({ poly, osmId, area, ...b }) => (formerSiteIds.has(b.id) ? { ...b, formerSite: true } : b)),
   landmarks,
   labels,
-  plots,
   landmarkModels,
-  legacyPlotMap,
-  previousPlotMap,
-  walkPaths,
-  drivePaths,
   square,
   squareRoofs,
 };
 mkdirSync(dirname(outFile), { recursive: true });
 writeFileSync(outFile, JSON.stringify(out));
+// Gameplay data is archived separately and never loaded by the explorer. It documents what the old
+// city-builder saves refer to (site ids k01…k22 and the save-migration tables); see docs/explorer.md.
+if (!process.argv.includes('--no-archive')) {
+  mkdirSync('data/legacy', { recursive: true });
+  writeFileSync('data/legacy/game-sites-v2.json', JSON.stringify({
+    note: 'Archived gameplay data from Chelsea Mini City (map v2). Not used at runtime. Fictional development sites and save-migration tables.',
+    mapVersion: MAP_VERSION, plots, legacyPlotMap, previousPlotMap,
+  }, null, 1));
+}
 console.log('peterJones', JSON.stringify(report.peterJones));
 console.log(JSON.stringify({ stats, checks, orientation: orient, legacyPlotMap, warnings: report.warnings.slice(0, 15), warningCount: report.warnings.length }, null, 1));
 console.log(`Wrote ${outFile} (${(JSON.stringify(out).length / 1024).toFixed(0)} KiB)`);

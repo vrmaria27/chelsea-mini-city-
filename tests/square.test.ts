@@ -1,7 +1,7 @@
 // Sloane Square central space: geography, protection and asset sanity checks.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { OSM, osmMap } from '../src/map/osmMap';
+import { OSM } from '../src/map/osmMap';
 import { SQUARE_Y, buildSquareNature, distToRing, pointInRing, squareTrees, type SquareData } from '../src/map/landmarks/sloaneSquare';
 import { planeSkeleton } from '../src/map/landmarks/planeTree';
 
@@ -41,11 +41,10 @@ test('nothing in the square sits on an estimated carriageway', () => {
   assert.ok(intrusion < 2.5);
 });
 
-test('the square is protected: no development site touches it', () => {
-  for (const p of osmMap.plots) {
-    const b = p.boundary!;
-    for (let i = 0; i < b.length; i += 2) assert.ok(!pointInRing(b[i], b[i + 1], ring) && distToRing(b[i], b[i + 1], ring) > 1, `${p.id}`);
-    assert.ok(!pointInRing(p.x, p.z, ring));
+test('the square stays open: no building footprint reaches into it', () => {
+  for (const b of OSM.buildings) {
+    const r = b.rings[0];
+    for (let i = 0; i < r.length; i += 2) assert.ok(!pointInRing(r[i], r[i + 1], ring) || distToRing(r[i], r[i + 1], ring) < 0.5, `${b.id} enters the square`);
   }
 });
 

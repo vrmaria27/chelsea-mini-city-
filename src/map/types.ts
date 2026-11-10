@@ -1,28 +1,5 @@
-// Shared map types. A GameMap supplies plots (for the simulation) and scenery builders (for the renderer).
+// Scene map types: geography only (no gameplay data).
 import type { MeshBuilder } from '../engine/geometry';
-
-export interface PlotDef {
-  id: string;
-  number: number;
-  /** Centre in map metres (x east, z south). */
-  x: number;
-  z: number;
-  /** Frontage width and depth in metres. */
-  w: number;
-  d: number;
-  /** Rotation about the vertical axis that turns the plot's local +z (front) toward its street. */
-  angle: number;
-  area: string;
-  street?: string | null;
-  /** Site boundary (map metres, flat x,z) — the cleared footprint. Absent on the legacy map (rectangle). */
-  boundary?: number[];
-  /** Triangulated boundary for the site ground (flat x,z triples). */
-  boundaryTris?: number[];
-  /** Building types that physically fit; absent = all. */
-  allowed?: ('townhouse' | 'shop' | 'park')[];
-  /** Why a type does not fit (shown before purchase). */
-  restrictions?: Partial<Record<'townhouse' | 'shop' | 'park', string>>;
-}
 
 /** Flat label in map space (one quad). */
 export interface MapLabelDef {
@@ -36,39 +13,27 @@ export interface MapLabelDef {
   color: string;
   outline: string;
   bold?: boolean;
-  /** 'major' labels are always shown; 'minor' only when the view is close enough. */
+  /** 'major' labels are shown whenever labels are on; 'minor' only when the miniature is close enough. */
   tier: 'major' | 'minor' | 'plinth';
 }
 
-export interface LifePath {
-  pts: number[]; // flat x,z
-  y: number;
-}
-
-export interface GameMap {
-  id: 'chelsea-osm' | 'legacy';
+export interface SceneMap {
+  id: 'chelsea-osm';
   version: number;
   title: string;
   /** Half the side length of the square map, metres. */
   half: number;
-  /** World metres per map metre at model scale 1. */
+  /** World metres per map metre at miniature scale 1. */
   baseScale: number;
-  plots: PlotDef[];
+  /** The neighbourhood itself (streets, buildings, landmarks). */
   buildStatic(): MeshBuilder;
+  /** The wooden base and plinth lettering, drawn only in the miniature view. */
+  buildPlinth(): MeshBuilder;
   labels(): MapLabelDef[];
-  walkPaths: LifePath[];
-  drivePaths: LifePath[];
-  /** Shown in the About panel and on the model. */
-  attribution: { text: string; url: string } | null;
-  /** Letter height for plot numbers (metres). */
-  plotLabelSize?: number;
+  attribution: { text: string; url: string };
   notes: string;
   /** Textured details (e.g. landmark signage) in map space, drawn with the model. */
   decals?: () => { canvas: HTMLCanvasElement; data: Float32Array }[];
   /** Animated nature layers (trees and water), drawn with the nature shader. */
   nature?: () => import('./landmarks/sloaneSquare').SquareNature;
-  /** Old plot id → this map's plot id (for migrating saves from the legacy map). */
-  legacyPlotMap?: Record<string, string>;
-  /** Plot ids of the previous version of this map → current ids (for migrating saves). */
-  previousPlotMap?: Record<string, string>;
 }

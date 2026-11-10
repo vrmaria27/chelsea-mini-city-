@@ -3,205 +3,124 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Chelsea Mini City</title>
-  <meta name="description" content="A cosy tabletop city-building game for Meta Quest 3 and desktop on a real OpenStreetMap model of Chelsea, London." />
+  <title>Chelsea Explorer</title>
+  <meta name="description" content="Explore a reconstructed model of Sloane Square and King's Road, Chelsea, as a tabletop miniature and at street level, on Meta Quest 3 (WebXR) or desktop." />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M4 30V14l8-6 8 6v16z' fill='%23a9563f'/%3E%3Cpath d='M18 30V18l5-4 5 4v12z' fill='%23f0e7d4'/%3E%3C/svg%3E" />
   <style>
     :root {
-      --bg: #e9e3d8; --card: rgba(250, 246, 238, 0.94); --ink: #2e2a26; --soft: #7a6f63; --line: #e0d4bf;
-      --green: #2f5a45; --good: #3f8a5a; --bad: #a33b32; --gold: #c99a4a;
+      --bg: #e9e3d8; --card: rgba(250, 246, 238, 0.93); --ink: #2e2a26; --soft: #6f655a; --line: #e0d4bf;
+      --green: #2f5a45; --bad: #a33b32; --gold: #c99a4a;
       font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     }
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
     html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); }
     canvas#scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-    .hud { position: fixed; z-index: 2; pointer-events: none; }
-    .hud > * { pointer-events: auto; }
-    .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 6px 24px rgba(60, 45, 30, 0.12); }
-    #status { top: 14px; left: 14px; width: 330px; padding: 14px 16px; }
-    #status h1 { font-size: 20px; margin: 0 0 2px; letter-spacing: 0.2px; }
-    #status .note { font-size: 12px; color: var(--soft); margin: 0 0 10px; }
-    .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
-    .stat { background: #fffaf1; border-radius: 10px; padding: 6px 10px; }
-    .stat span { display: block; font-size: 11px; color: var(--soft); text-transform: uppercase; letter-spacing: 0.6px; }
-    .stat b { font-size: 20px; }
-    .tickbar { height: 4px; background: #e8dcc8; border-radius: 2px; margin: 8px 0 10px; overflow: hidden; }
-    .tickbar i { display: block; height: 100%; width: 0; background: var(--gold); }
-    .goal { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
-    .goal.done { color: var(--good); }
-    .bar { position: relative; height: 22px; background: #e8dcc8; border-radius: 11px; margin: 4px 0; overflow: hidden; font-size: 12px; font-weight: 700; }
-    .bar i { position: absolute; inset: 0 auto 0 0; background: #d9a54a; border-radius: 11px; }
-    .bar.full i { background: var(--good); }
-    .bar span { position: relative; display: block; text-align: center; line-height: 22px; }
-    #build { bottom: 14px; left: 50%; transform: translateX(-50%); padding: 10px; display: flex; gap: 8px; align-items: stretch; }
-    button { font: inherit; color: inherit; cursor: pointer; border: 1px solid var(--line); background: #fff; border-radius: 12px; padding: 8px 12px; }
+    .hud { position: fixed; z-index: 2; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 4px 18px rgba(60, 45, 30, 0.1); }
+    button { font: inherit; color: inherit; cursor: pointer; border: 1px solid var(--line); background: #fff; border-radius: 10px; padding: 7px 11px; font-size: 13.5px; }
     button:hover { background: #f3e3c3; }
     button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
-    .tool { min-width: 128px; text-align: center; }
-    .tool b { display: block; font-size: 16px; }
-    .tool .cost { font-weight: 700; color: var(--good); }
-    .tool .cost.no { color: var(--bad); }
-    .tool small { display: block; color: var(--soft); font-size: 11px; }
-    .tool[aria-pressed="true"] { background: var(--green); color: #fff; border-color: var(--green); }
-    .tool[aria-pressed="true"] .cost { color: #ffe6a8; }
-    .tool[aria-pressed="true"] small { color: #dfe9e3; }
-    #controls { top: 14px; right: 14px; padding: 10px; display: grid; grid-template-columns: repeat(2, auto); gap: 6px; }
-    #controls button { font-size: 13px; }
-    #controls .wide { grid-column: span 2; }
-    #resetSave.armed { background: var(--bad); color: #fff; border-color: var(--bad); }
-    #message { bottom: 128px; left: 50%; transform: translateX(-50%); padding: 8px 16px; font-size: 14px; font-weight: 600; max-width: min(720px, 92vw); text-align: center; }
-    #message.error { background: #f8e1dc; color: var(--bad); }
-    #message.success { background: #e1f0e4; }
-    #message.celebrate { background: #fdf0c8; font-size: 16px; }
-    .chapter-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-    .chapter-dots { display: flex; gap: 4px; }
-    .chapter-dots i { width: 10px; height: 10px; border-radius: 50%; background: #e8dcc8; border: 1px solid #cdbb98; }
-    .chapter-dots i.on { background: var(--good); border-color: var(--good); }
-    .next { margin: 6px 0 0; font-size: 12.5px; background: #fdf6e3; border-radius: 8px; padding: 6px 8px; line-height: 1.35; }
-    .next::before { content: "Next: "; font-weight: 700; }
-    #inspector { top: 404px; right: 14px; width: 300px; padding: 12px 14px; font-size: 13px; max-height: calc(100vh - 520px); overflow: auto; }
-    #inspector.idle { opacity: 0.88; }
-    #inspector h2 { font-size: 16px; margin: 0; }
-    #inspector .ins-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-    #inspector .ins-head button { padding: 2px 9px; }
-    #inspector .sub { color: var(--soft); margin: 2px 0 8px; }
-    #inspector .lvl2 { display: inline-block; background: #e8b84a; color: #3b2e10; font-weight: 700; border-radius: 10px; padding: 2px 10px; margin: 4px 0 8px; }
-    .ins-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 8px; }
-    .ins-stats div { background: #fffaf1; border-radius: 8px; padding: 4px 6px; }
-    .ins-stats span { display: block; font-size: 10px; color: var(--soft); text-transform: uppercase; }
-    .ins-stats b { font-size: 16px; }
-    #inspector ul { list-style: none; padding: 0; margin: 0 0 6px; }
-    #inspector .rows li { display: flex; justify-content: space-between; gap: 6px; border-bottom: 1px solid var(--line); padding: 3px 0; }
-    #inspector .rows b { color: var(--good); } #inspector .rows b.neg { color: var(--bad); }
-    #inspector .near { color: var(--soft); margin: 4px 0; }
-    #inspector .hint { border-radius: 8px; padding: 6px 8px; margin: 8px 0; background: #fdf6e3; font-weight: 600; }
-    #inspector .hint.warn { background: #f8e1dc; color: var(--bad); }
-    #inspector .hint.good { background: #e1f0e4; }
-    #inspector .upgrade { width: 100%; background: var(--green); color: #fff; border-color: var(--green); font-weight: 700; padding: 9px; }
-    #inspector .upgrade:disabled { background: #ece6dc; color: #9a9087; border-color: var(--line); cursor: not-allowed; }
-    #inspector .effects li { padding: 2px 0; } #inspector .effects li::before { content: "• "; }
-    #inspector .reason { color: var(--bad); margin: 4px 0 0; font-weight: 600; }
-    #controls [aria-pressed="true"] { background: var(--green); color: #fff; border-color: var(--green); }
-    .tool.inspect .cost { color: var(--soft); font-weight: 600; }
-    .site-count { align-self: center; max-width: 120px; font-size: 12px; font-weight: 700; color: var(--green); line-height: 1.3; padding: 0 4px; }
-    #vr { position: fixed; z-index: 3; right: 14px; bottom: 14px; padding: 10px 12px; max-width: 300px; font-size: 13px; }
-    #vr button { width: 100%; background: var(--green); color: #fff; border-color: var(--green); font-weight: 700; font-size: 16px; padding: 10px; }
+    button.primary { background: var(--green); color: #fff; border-color: var(--green); font-weight: 700; }
+    button.primary:hover { background: #24483a; }
+    button[aria-pressed="true"] { background: #dfe9e3; border-color: #9fbcab; }
+    button.link { border: 0; background: none; padding: 0; color: var(--green); text-decoration: underline; font-size: inherit; }
+    #top { top: 12px; left: 12px; padding: 10px 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; max-width: calc(100vw - 24px); }
+    #top h1 { font-size: 17px; margin: 0 6px 0 2px; letter-spacing: 0.2px; }
+    .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+    .seg button { border: 0; border-radius: 0; }
+    .seg button[aria-pressed="true"] { background: var(--green); color: #fff; }
+    #compass { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: #fff; display: grid; place-items: center; }
+    #compass svg { transition: none; }
+    #places { top: 70px; left: 12px; width: 250px; padding: 10px; max-height: calc(100vh - 170px); overflow: auto; }
+    #places h2, #side h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--soft); margin: 2px 4px 6px; }
+    #places ul { list-style: none; margin: 0; padding: 0; }
+    #places li button { width: 100%; text-align: left; border: 0; padding: 6px 8px; border-radius: 8px; background: transparent; }
+    #places li button:hover { background: #f3e3c3; }
+    #places li button[aria-current="true"] { background: #dfe9e3; font-weight: 700; }
+    #places li small { display: block; color: var(--soft); font-size: 11px; }
+    #side { top: 70px; right: 12px; width: 220px; padding: 10px; display: grid; gap: 6px; }
+    #side .row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    #info { bottom: 14px; left: 50%; transform: translateX(-50%); width: min(620px, calc(100vw - 24px)); padding: 12px 16px; font-size: 14px; line-height: 1.45; }
+    #info h3 { margin: 0 0 2px; font-size: 16px; }
+    #info p { margin: 0; }
+    #info .notice.warn { color: var(--bad); font-weight: 600; }
+    #info .actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    #info .help { color: var(--soft); font-size: 12.5px; }
+    #vr { position: fixed; z-index: 3; right: 12px; bottom: 14px; padding: 10px 12px; max-width: 260px; font-size: 12.5px; }
+    #vr button { width: 100%; font-size: 15px; padding: 9px; }
     #vr p { margin: 0; color: var(--soft); }
-    #onboarding { position: fixed; z-index: 4; inset: 0; display: grid; place-items: center; background: rgba(40, 32, 24, 0.25); }
-    #onboarding .card { width: min(440px, 92vw); padding: 22px 24px; }
-    #onboarding h2 { margin: 0 0 12px; }
-    #onboarding ol { margin: 0 0 14px; padding-left: 22px; font-size: 17px; line-height: 1.7; }
-    #onboarding p { color: var(--soft); font-size: 13px; margin: 0 0 14px; }
-    #onboarding button { background: var(--green); color: #fff; border-color: var(--green); font-weight: 700; padding: 10px 18px; }
+    #fade { position: fixed; inset: 0; z-index: 1; background: #1d1a17; opacity: 0; pointer-events: none; transition: opacity 0.18s ease; }
+    #attribution { position: fixed; z-index: 2; left: 12px; bottom: 6px; font-size: 11px; color: var(--soft); }
+    #attribution a { color: var(--green); }
     .modal { position: fixed; z-index: 5; inset: 0; display: grid; place-items: center; background: rgba(40, 32, 24, 0.3); }
-    .modal .card { width: min(560px, 92vw); max-height: 86vh; overflow: auto; padding: 20px 24px; font-size: 14px; line-height: 1.5; }
+    .modal .card { width: min(580px, 92vw); max-height: 86vh; overflow: auto; padding: 20px 24px; font-size: 14px; line-height: 1.5; }
     .modal h2 { margin: 0 0 10px; }
     .modal .sub { color: var(--soft); }
-    .choice-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
-    #aboutClose, #choiceNew { background: var(--green); color: #fff; border-color: var(--green); font-weight: 700; }
-    button.link { border: 0; background: none; padding: 0; color: var(--green); text-decoration: underline; font-size: inherit; }
-    #status .note a { color: var(--green); }
     #error { position: fixed; inset: 0; display: none; place-items: center; z-index: 9; background: var(--bg); padding: 24px; text-align: center; }
-    @media (max-width: 760px) {
-      #status { width: calc(100vw - 16px); left: 8px; top: 8px; padding: 8px 10px; }
-      #status h1 { font-size: 16px; }
-      #status .stats { grid-template-columns: repeat(4, 1fr); gap: 4px; }
-      .stat { padding: 4px 6px; } .stat span { font-size: 9px; } .stat b { font-size: 14px; }
-      .bar { height: 16px; font-size: 10px; } .bar span { line-height: 16px; }
-      #controls { top: auto; right: 8px; left: 8px; bottom: 76px; grid-template-columns: repeat(4, 1fr); padding: 6px; gap: 4px; }
-      #controls button { font-size: 11px; padding: 6px 4px; }
-      #controls .wide { grid-column: span 1; }
-      #build { width: calc(100vw - 16px); bottom: 8px; padding: 6px; gap: 6px; }
-      .tool { min-width: 0; flex: 1; padding: 4px; } .tool b { font-size: 14px; }
-      .tool small { display: none; }
-      #message { bottom: 166px; font-size: 12px; padding: 6px 10px; }
-      #vr { display: none; }
-      #status .next, #goals .bar:nth-child(n+2) { display: none; }
-      #inspector { top: auto; bottom: 214px; left: 8px; right: 8px; width: auto; max-height: 34vh; }
-      #inspector.idle { display: none; }
-      #controls { grid-template-columns: repeat(5, 1fr); }
-      #controls #toggleMotion, #controls #toggleDetail { display: none; }
+    body.street #places { opacity: 0.96; }
+    @media (max-width: 820px) {
+      #places { top: auto; bottom: 150px; width: 200px; max-height: 34vh; }
+      #side { top: auto; bottom: 150px; width: 170px; }
+      #vr, #attribution { display: none; }
+      #info { bottom: 8px; font-size: 13px; }
     }
   </style>
 </head>
 <body>
-  <canvas id="scene" aria-label="Miniature Chelsea neighbourhood. Drag to orbit, scroll to zoom, click a numbered plot to build."></canvas>
+  <canvas id="scene" aria-label="3D model of Sloane Square and King's Road, Chelsea"></canvas>
+  <div id="fade"></div>
 
-  <section id="status" class="hud card" aria-live="polite">
-    <h1>Chelsea Mini City</h1>
-    <p class="note" id="attribution"></p>
-    <div class="stats">
-      <div class="stat"><span>Money</span><b id="money">£10,000</b></div>
-      <div class="stat"><span>Residents</span><b id="residents">0</b></div>
-      <div class="stat"><span>Happiness</span><b id="happiness">—</b></div>
-      <div class="stat"><span>Income / tick</span><b id="income">+£0</b></div>
+  <header id="top" class="hud card">
+    <h1>Chelsea Explorer</h1>
+    <div class="seg" role="group" aria-label="View">
+      <button data-action="toMiniature" id="btnMini" aria-pressed="true">Miniature</button>
+      <button data-action="toStreet" id="btnStreet" aria-pressed="false">Street level</button>
     </div>
-    <div class="tickbar" title="Next income tick (every 10 seconds of play)"><i id="tick"></i></div>
-    <div class="chapter-head"><div class="goal" id="chapter">Chapter 1 of 3</div><div class="chapter-dots" aria-hidden="true"><i></i><i></i><i></i></div></div>
-    <div id="goals"></div>
-    <p class="next" id="hint"></p>
-  </section>
+    <div id="compass" title="North indicator" aria-label="North indicator"><svg width="26" height="26" viewBox="-13 -13 26 26" aria-hidden="true"><path d="M0 -11 L4 1 L0 -1 L-4 1 Z" fill="#a33b32"/><path d="M0 11 L4 -1 L0 1 L-4 -1 Z" fill="#b9b0a3"/></svg></div>
+    <span style="font-size:12px;color:var(--soft)">North</span>
+  </header>
 
-  <section id="controls" class="hud card" aria-label="View and game controls">
-    <button data-action="undo" class="wide" title="Undo the last build or upgrade (Z)">↶ Undo last action</button>
-    <button data-action="rotL" title="Rotate model (Q)">↺ Rotate</button>
-    <button data-action="rotR" title="Rotate model (E)">Rotate ↻</button>
-    <button data-action="scaleDown" title="Smaller model (-)">− Smaller</button>
-    <button data-action="scaleUp" title="Larger model (+)">+ Larger</button>
-    <button data-action="mapView" class="wide" aria-pressed="false" title="Top-down, north-up view (M)">Map view (north up)</button>
-    <button data-action="resetView" class="wide" title="Reset camera and model (R)">Reset view</button>
-    <button data-action="resetSave" id="resetSave" class="wide">Reset save</button>
-    <button data-action="toggleSites" id="toggleSites" class="wide" aria-pressed="true" title="Highlight free development sites (B)">Show buildable sites: On</button>
-    <button data-action="toggleMotion" id="toggleMotion" class="wide" aria-pressed="false">Reduced motion: Off</button>
-    <button data-action="toggleDetail" id="toggleDetail" class="wide" aria-pressed="false">Low detail: Off</button>
-    <button data-action="help">How to play</button>
-    <button data-action="about">About</button>
-  </section>
+  <nav id="places" class="hud card" aria-label="Places">
+    <h2>Places</h2>
+    <ul id="placeList"></ul>
+  </nav>
 
-  <section id="inspector" class="hud card idle" aria-live="polite" aria-label="Inspector"></section>
-
-  <div id="message" class="hud card" role="status"></div>
-
-  <section id="build" class="hud card" aria-label="Build menu">
-    <button class="tool" data-action="tool:townhouse" aria-pressed="false"><b>Townhouse</b><span class="cost">£1,000</span><small>+10 residents, +£100/tick</small></button>
-    <button class="tool" data-action="tool:shop" aria-pressed="false"><b>Shop</b><span class="cost">£1,500</span><small>+£200/tick near homes</small></button>
-    <button class="tool" data-action="tool:park" aria-pressed="false"><b>Park</b><span class="cost">£750</span><small>+10 happiness nearby</small></button>
-    <button class="tool inspect" data-action="tool:inspect" aria-pressed="false"><b>Inspect</b><span class="cost">details</span><small>&amp; upgrades</small></button>
-    <div class="site-count" id="siteCount" aria-live="polite"></div>
-  </section>
-
-  <section id="vr" class="hud card"><p>Checking for VR support…</p></section>
-
-  <div id="onboarding" hidden>
-    <div class="card" role="dialog" aria-labelledby="obTitle">
-      <h2 id="obTitle">Welcome to Chelsea Mini City</h2>
-      <ol>
-        <li>Choose a building.</li>
-        <li>Point at an empty plot.</li>
-        <li>Build a happier Chelsea.</li>
-      </ol>
-      <p>Homes start at 50 happiness; a shop within 80 m adds 10 and each park within 80 m adds 10. Hover a plot to see the exact effect before you buy. Use <b>Inspect</b> to see why a building is (or isn't) doing well, and to <b>upgrade</b> it to Level 2. Work through three neighbourhood chapters; income arrives every 10 seconds of play.</p>
-      <button id="obClose">Start building</button>
+  <aside id="side" class="hud card" aria-label="View and settings">
+    <h2 id="sideTitle">Miniature</h2>
+    <div id="miniControls" class="row">
+      <button data-action="rotL" title="Rotate the model (Q)">⟲ Rotate</button>
+      <button data-action="rotR" title="Rotate the model (E)">Rotate ⟳</button>
+      <button data-action="scaleDown" title="Smaller (−)">− Smaller</button>
+      <button data-action="scaleUp" title="Larger (+)">Larger +</button>
+      <button data-action="resetView" title="Reset the view (R)" style="grid-column: span 2">Reset view</button>
     </div>
-  </div>
-
-  <div id="about" class="modal" hidden>
-    <div class="card" role="dialog" aria-labelledby="aboutTitle">
-      <h2 id="aboutTitle">About this map</h2>
-      <div id="aboutBody"></div>
-      <button id="aboutClose">Close</button>
-    </div>
-  </div>
-
-  <div id="choice" class="modal" hidden>
-    <div class="card" role="dialog" aria-labelledby="choiceTitle">
-      <h2 id="choiceTitle">Your saved city needs a decision</h2>
-      <p id="choiceBody"></p>
-      <div class="choice-buttons">
-        <button id="choiceLegacy">Continue on the legacy map</button>
-        <button id="choiceNew">Start on the real Chelsea map</button>
+    <div id="streetControls" hidden>
+      <button data-action="toMiniature" class="primary" style="width:100%">Back to miniature</button>
+      <div class="row" style="margin-top:6px">
+        <button data-action="turnL" title="Turn left (Q)">↶ Turn</button>
+        <button data-action="turnR" title="Turn right (E)">Turn ↷</button>
       </div>
+      <button id="lockBtn" style="width:100%;margin-top:6px">Look with the mouse</button>
+      <p class="sub" style="font-size:11.5px;margin:4px 2px 0;color:var(--soft)">Captures the pointer so moving the mouse looks around. Press <b>Esc</b> to release it.</p>
+    </div>
+    <h2 style="margin-top:6px">Settings</h2>
+    <button data-action="labels" id="optLabels" aria-pressed="true">Labels: on</button>
+    <button data-action="lowDetail" id="optDetail" aria-pressed="false">Low detail: off</button>
+    <button data-action="reducedMotion" id="optMotion" aria-pressed="false">Reduced motion: off</button>
+    <button data-action="about">About &amp; attribution</button>
+  </aside>
+
+  <section id="info" class="hud card" aria-live="polite"></section>
+
+  <div id="vr" class="card"></div>
+  <div id="attribution"></div>
+
+  <div id="about" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+    <div class="card">
+      <h2 id="aboutTitle">About Chelsea Explorer</h2>
+      <div id="aboutBody"></div>
+      <p><button id="aboutClose" class="primary">Close</button></p>
     </div>
   </div>
 

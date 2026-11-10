@@ -1,7 +1,7 @@
 // Sloane Square perimeter reconstruction: integration, coverage and safety checks.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { OSM, osmMap } from '../src/map/osmMap';
+import { OSM } from '../src/map/osmMap';
 import { MeshBuilder } from '../src/engine/geometry';
 import { SQUARE_MODELS, buildSquareBuildings } from '../src/map/landmarks/squareBuildings';
 import { distToRing, pointInRing } from '../src/map/landmarks/sloaneSquare';
@@ -83,10 +83,14 @@ test('heights and storeys match the documented inventory (map metres, before tab
   assert.ok(t('square:wyndham') > 22 && t('square:wyndham') < 30);
 });
 
-test('development sites are untouched by the reconstruction', () => {
-  const ids = new Set(custom.map((b) => b.id));
-  for (const p of OSM.plots) for (const r of p.replaces) assert.ok(!ids.has(r), `${p.id} would replace ${r}`);
-  for (const p of osmMap.plots) assert.ok(Math.min(...ringPts(p.boundary!).map((q) => distToRing(q[0], q[1], sqRing))) > 30, `${p.id} near the square`);
+test('former game sites are ordinary masses again and never replace a reconstruction', () => {
+  const former = OSM.buildings.filter((b) => b.formerSite);
+  assert.equal(former.length, 32);
+  for (const b of former) {
+    assert.ok(!b.custom, `${b.id} is a reconstructed model`);
+    assert.ok(!b.protected, `${b.id} is protected`);
+    assert.ok(Math.min(...ringPts(b.rings[0]).map((q) => distToRing(q[0], q[1], sqRing))) > 30, `${b.id} near the square`);
+  }
 });
 
 test('the reconstruction stays within a sensible triangle budget', () => {
