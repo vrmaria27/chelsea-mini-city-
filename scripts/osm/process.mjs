@@ -371,7 +371,77 @@ function rectPoly(cx, cz, angle, w, d) {
 }
 const allSegs = roads.filter((r) => r.cls !== 'path').flatMap((r) => { const o = []; for (let i = 0; i + 3 < r.pts.length; i += 2) o.push({ a: [r.pts[i], r.pts[i + 1]], b: [r.pts[i + 2], r.pts[i + 3]], half: r.w / 2 }); return o; });
 const segD = (p, a, b) => { const dx = b[0] - a[0], dz = b[1] - a[1], l = dx * dx + dz * dz || 1; const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / l)); return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dz); };
+// ---- Sloane Square central space (protected public space) ------------------------------------
+// Detail comes from a focused extract (scripts/osm/fetch-square.mjs → data/osm/square-raw.json):
+// the kerb ways that ring the square, sourced trees, benches, lamps, the Venus Fountain basin, the
+// war memorial and the drinking fountain. Positions are OSM's; sizes/shapes are documented estimates.
+const SQUARE_FILE = 'data/osm/square-raw.json';
+const VENUS_NODE = 8354000193;
+let square = null;
+try {
+  const sq = JSON.parse(readFileSync(SQUARE_FILE, 'utf8'));
+  const els = sq.elements;
+  const venusEl = els.find((e) => e.id === VENUS_NODE);
+  const V = proj.toXZ(venusEl.lat, venusEl.lon);
+  const P = (g) => proj.toXZ(g.lat, g.lon);
+  // Chain kerb ways (any kerb type) by shared end points, closing small gaps, into rings.
+  const kerbs = els.filter((e) => e.type === 'way' && e.tags?.barrier === 'kerb').map((e) => e.geometry.map(P)).filter((pts) => pts.some((q) => Math.hypot(q[0] - V[0], q[1] - V[1]) < 90));
+  const same = (a, b, tol) => Math.hypot(a[0] - b[0], a[1] - b[1]) <= tol;
+  const rings = [];
+  const pool = kerbs.map((k) => k.slice());
+  while (pool.length) {
+    let chain = pool.shift();
+    for (let grow = true; grow;) {
+      grow = false;
+      if (chain.length > 2 && same(chain[0], chain[chain.length - 1], 0.05)) break;
+      for (const tol of [0.05, 1.5]) {
+        const end = chain[chain.length - 1];
+        const k = pool.findIndex((w) => same(w[0], end, tol) || same(w[w.length - 1], end, tol));
+        if (k >= 0) { let w = pool.splice(k, 1)[0]; if (!same(w[0], end, tol)) w = w.reverse(); chain = chain.concat(w.slice(1)); grow = true; break; }
+      }
+    }
+    if (chain.length > 4 && same(chain[0], chain[chain.length - 1], 1.5)) rings.push(chain.slice(0, -1));
+  }
+  const enclosing = rings.filter((r) => pointInPolygon(V, r)).sort((a, b) => Math.abs(ringArea(a)) - Math.abs(ringArea(b)));
+  if (!enclosing.length) throw new Error('no kerb ring encloses the Venus Fountain');
+  const ringPts = simplifyRing(enclosing[0], 0.15);
+  const ring = ringPts.flat().map(round1);
+  const inside = (q, m = 0) => pointInPolygon(q, ringPts) && (m === 0 || polySegDistRing(ringPts, q) >= m);
+  function polySegDistRing(poly, q) { let d = Infinity; for (let k = 0; k < poly.length; k++) { const a = poly[k], b = poly[(k + 1) % poly.length]; const dx = b[0] - a[0], dz = b[1] - a[1], l = dx * dx + dz * dz || 1; const t = Math.max(0, Math.min(1, ((q[0] - a[0]) * dx + (q[1] - a[1]) * dz) / l)); d = Math.min(d, Math.hypot(q[0] - a[0] - t * dx, q[1] - a[1] - t * dz)); } return d; }
+  const nodes = (pred) => els.filter((e) => e.type === 'node' && pred(e.tags ?? {})).map((e) => ({ id: e.id, p: P(e), tags: e.tags, ts: e.timestamp })).filter((n) => inside(n.p));
+  // principal axis of the square (long side) for orienting furniture
+  let best = { len: 0, ang: 0 };
+  for (let k = 0; k < ringPts.length; k++) { const a = ringPts[k], b = ringPts[(k + 1) % ringPts.length]; const len = Math.hypot(b[0] - a[0], b[1] - a[1]); if (len > best.len) best = { len, ang: Math.atan2(b[1] - a[1], b[0] - a[0]) }; }
+  let axis = best.ang; if (Math.cos(axis) < 0) axis += Math.PI;
+  const basinEl = els.find((e) => e.id === 554693845);
+  const basin = basinEl.geometry.map(P);
+  const bc = basin.slice(0, -1).reduce((acc, q, _, arr) => [acc[0] + q[0] / arr.length, acc[1] + q[1] / arr.length], [0, 0]);
+  const memorial = nodes((t) => t.historic === 'memorial')[0];
+  const drinking = nodes((t) => t['amenity:disused'] === 'drinking_water' || t.amenity === 'drinking_water')[0];
+  const cycle = nodes((t) => t.amenity === 'bicycle_parking');
+  square = {
+    name: 'Sloane Square',
+    source: `OpenStreetMap (${SQUARE_FILE}, retrieved ${sq.retrieved}, OSM data as of ${sq.osm_base})`,
+    ring,
+    tris: triangulate(ringPts).map(round1),
+    area: Math.round(Math.abs(ringArea(ringPts))),
+    axis: +axis.toFixed(4),
+    fountain: { osm: `way/${basinEl.id}`, x: round1(bc[0]), z: round1(bc[1]), basin: basin.slice(0, -1).flat().map(round1), statue: [round1(V[0]), round1(V[1])] },
+    memorial: memorial && { osm: `node/${memorial.id}`, x: round1(memorial.p[0]), z: round1(memorial.p[1]) },
+    drinkingFountain: drinking && { osm: `node/${drinking.id}`, x: round1(drinking.p[0]), z: round1(drinking.p[1]) },
+    trees: nodes((t) => t.natural === 'tree').map((n) => ({ osm: `node/${n.id}`, x: round1(n.p[0]), z: round1(n.p[1]), edited: n.ts?.slice(0, 10) ?? null })),
+    benches: nodes((t) => t.amenity === 'bench').map((n) => ({ osm: `node/${n.id}`, x: round1(n.p[0]), z: round1(n.p[1]) })),
+    lamps: nodes((t) => t.highway === 'street_lamp').map((n) => ({ osm: `node/${n.id}`, x: round1(n.p[0]), z: round1(n.p[1]) })),
+    cycleStands: cycle.map((n) => ({ osm: `node/${n.id}`, x: round1(n.p[0]), z: round1(n.p[1]), capacity: +(n.tags.capacity ?? 6) })),
+  };
+  report.square = { area: square.area, trees: square.trees.length, benches: square.benches.length, lamps: square.lamps.length, cycleStands: square.cycleStands.length, memorial: !!memorial, drinkingFountain: !!drinking, kerbWays: kerbs.length, rings: rings.length };
+} catch (e) {
+  report.warnings.push(`Sloane Square detail unavailable: ${e.message}`);
+}
+
 const blockedAreas = areas.filter((a) => a.kind !== 'parking').map((a) => { const q = []; for (let i = 0; i < a.ring.length; i += 2) q.push([a.ring[i], a.ring[i + 1]]); return q; });
+// The square is protected public space: no development site may touch it.
+if (square) { const q = []; for (let i = 0; i < square.ring.length; i += 2) q.push([square.ring[i], square.ring[i + 1]]); blockedAreas.push(q); }
 
 /** Analyse one footprint as a potential site: street frontage, oriented inscribed rectangle, fit. */
 function analyseSite(b) {
@@ -719,6 +789,7 @@ const out = {
   previousPlotMap,
   walkPaths,
   drivePaths,
+  square,
 };
 mkdirSync(dirname(outFile), { recursive: true });
 writeFileSync(outFile, JSON.stringify(out));

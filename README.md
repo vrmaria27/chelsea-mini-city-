@@ -174,6 +174,25 @@ Peter Jones (Grade II*, 1936–39, W. Crabtree with Slater & Moberly and C. H. R
 
 **Not done:** no side-by-side comparison against Google Maps or Street View, and no headset testing. The checks were renders compared with the supplied photos (`docs/peter-jones-*.jpg`).
 
+## Sloane Square
+
+The central public space of Sloane Square is a dedicated model (`src/map/landmarks/sloaneSquare.ts`, `planeTree.ts`, `leafAtlas.ts`):
+- Yorkstone paving inside the real OSM kerb line (about 83 × 29 m), with a granite kerb.
+- The Venus Fountain (Gilbert Ledward, 1953): octagonal pool from OSM, stepped stone base, bronze vase with a relief band, the kneeling figure with her conch, and gently moving water.
+- The Chelsea war memorial, the 1882 drinking fountain, benches, lamps and cycle stands at their OSM positions.
+- Fourteen London plane trees at their OSM-mapped positions, each with its own height, branching, rotation and sway phase.
+
+The square is protected public space: development sites can never touch it. Trees sway subtly; **Reduced motion** stops them and the water. **Low detail** swaps the leaf cards for cheaper opaque foliage.
+
+| Top-down | Angled |
+|---|---|
+| ![Sloane Square top-down](docs/sloane-square-top.png) | ![Sloane Square angled](docs/sloane-square-angled.png) |
+| ![Venus Fountain close-up](docs/sloane-square-fountain.png) | ![Plane trees close-up](docs/sloane-square-trees.png) |
+
+References (dated, openly licensed photos), observed vs estimated dimensions, the tree-approach comparison (`docs/tree-comparison.png`), measurements, simplifications and a headset checklist are in [docs/sloane-square.md](docs/sloane-square.md). `npm run lab:trees` serves the tree comparison harness at http://localhost:8000/.
+
+Square detail comes from a focused OSM extract (`data/osm/square-raw.json`). It is refreshed by the *Import Sloane Square OSM detail* GitHub Action (push to the `osm-square` branch), then `npm run import:map`.
+
 ## Install, run, build
 
 Requires **Node.js 20+**.
@@ -211,6 +230,7 @@ Open the printed `https://192.168.x.x:5173/` on the Quest and accept the self-si
 
 Not yet verified on a headset. Please check:
 
+- [ ] Sloane Square: see the checklist in [docs/sloane-square.md](docs/sloane-square.md#manual-headset-checklist-sloane-square). Watch for leaf shimmer when leaning in, check that sway is comfortable, and check the frame rate with the square filling the view.
 - [ ] Page loads in the Quest Browser over HTTPS and shows **Enter VR**. An older save moves to the real map with its buildings intact (message shown).
 - [ ] Peter Jones is recognisable from the tabletop (curved corner, white top, gold-striped glazing) and holds up when you lean in close.
 - [ ] The real street layout is recognisable at tabletop scale: King's Road, Sloane Square, Duke of York Square and the street names are readable. The "N" arrow on the plinth points north.
@@ -239,7 +259,9 @@ src/map/osm/    chelsea-osm.json: processed, bundled OSM-derived map (ODbL)
 scripts/osm/    fetch.mjs (Overpass extract), process.mjs (projection, clipping, plots, labels), geo.mjs
 data/osm/       raw.json: the unmodified OSM extract the bundled map was built from (ODbL)
 docs/           screenshots (top-down map view, gameplay)
-src/engine/     Tiny WebGL2 renderer (incl. instancing), geometry builder, maths, text + marker atlases
+src/map/landmarks/  Peter Jones; Sloane Square (paving, fountain, memorial, furniture), plane trees, leaf atlas
+src/lab/        Tree comparison harness (development only; npm run lab:trees)
+src/engine/     Tiny WebGL2 renderer (incl. instancing and the nature shader for trees and water), geometry builder, maths, text + marker atlases
 src/game/       Game controller, inspector view model, city model, scene + overlays + picking, VR panels, life
 src/main.ts     Desktop camera/input, HTML HUD, WebXR session and controllers
 tests/          node:test unit tests (run with tsx)
@@ -250,7 +272,7 @@ scripts/        esbuild build and dev/preview server
 ### Technical notes
 
 - **Why not Three.js/Vite?** The environment this prototype was built in had no package-registry access, so it uses a small hand-written WebGL2 + WebXR renderer bundled with esbuild (the bundler Vite uses internally). There are no runtime dependencies, and the bundle is about 90 KB. Rendering is isolated in `src/engine` and `src/game/scene.ts`, so swapping in Three.js later wouldn't touch the game rules.
-- **Performance choices:** all static scenery (terraces, roads, squares and trees, about 25k triangles) is merged into **one** vertex buffer and one draw call. The building layer is rebuilt only when buildings change. All map labels share one texture atlas. Lighting is a cheap hemisphere + sun model, with no shadows, post-processing or large textures. Frame rate on Quest 3 has **not** been measured.
+- **Performance choices:** all static scenery (terraces, roads, squares, Sloane Square's paving and fountain) is merged into **one** vertex buffer and one draw call. The square's trees and water add four draw calls with the nature shader (about 49k triangles; alpha-tested leaf cards, no blending except the small water surfaces). The building layer is rebuilt only when buildings change. All map labels share one texture atlas. Lighting is a cheap hemisphere + sun model, with no shadows, post-processing or large textures. Frame rate on Quest 3 has **not** been measured.
 - **Neighbourhood life:** at most 24 pedestrians (more as the population grows) walk fixed pavement loops around populated blocks, inset from the kerb so they never cross buildings. Six vehicles, including a red bus, drive fixed King's Road and side-street lanes on the left. People and vehicles each take one instanced draw call. There's no pathfinding or collision.
 - **Previews are exact:** placement and upgrade estimates are computed by applying the real rules to a copy of the city, and tests check them against actual results.
 - **Save format (v3):** `localStorage["chelsea-mini-city.save"] = { version: 3, map: { id, version }, state: { money, buildings: {plot: {type, level}}, lastAction, chapter, ticks }, prefs }`.

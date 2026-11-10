@@ -5,6 +5,7 @@ import type { GameMap, LifePath, MapLabelDef, PlotDef } from './types';
 import { MeshBuilder, hex, rng, shade, type RGB } from '../engine/geometry';
 import { P, tree } from '../game/cityModel';
 import { UPPER_TOP, buildPeterJones, peterJonesDecals, type LandmarkModelData } from './landmarks/peterJones';
+import { SQUARE_Y, buildSloaneSquare, buildSquareNature, type SquareData } from './landmarks/sloaneSquare';
 
 interface OsmRoad { id: number; name: string | null; hw: string; cls: 'main' | 'street' | 'service' | 'pedestrian' | 'path'; w: number; pts: number[]; sidewalk?: boolean }
 interface OsmArea { id: string; kind: 'green' | 'plaza' | 'carriageway' | 'parking'; name: string | null; ring: number[]; tris: number[] }
@@ -22,6 +23,7 @@ interface OsmData {
   previousPlotMap: Record<string, string>;
   walkPaths: number[][];
   drivePaths: { name: string; w: number; pts: number[] }[];
+  square: SquareData | null;
 }
 
 export const OSM = data as unknown as OsmData;
@@ -160,6 +162,7 @@ function buildStatic(): MeshBuilder {
   // Landmarks with a custom model replace their generic extrusion (no duplicate façades).
   for (const bl of OSM.buildings) extrude(b, bl, hidden.has(bl.id) || !!bl.custom);
   for (const lm of OSM.landmarkModels) if (lm.model === 'peter-jones') buildPeterJones(b, lm);
+  if (OSM.square) buildSloaneSquare(b, OSM.square);
   // Decorative trees inside green spaces (positions are not sourced; deterministic scatter)
   const rand = rng(51491);
   for (const a of OSM.areas) {
@@ -193,8 +196,15 @@ function labels(): MapLabelDef[] {
   for (const m of OSM.landmarks) {
     // Lay the name on the landmark's own roof, or on the ground for squares and parks.
     const roof = OSM.buildings.find((bl) => pointInRing(m.x, m.z, bl.rings[0]));
-    const y = roof?.custom === 'peter-jones' ? UPPER_TOP + 1.3 : roof ? roof.h + 0.6 : Y.main + 0.4;
-    out.push({ text: m.name, x: m.x, z: m.z, y, angle: 0, size: 9.5, color: '#2e2a26', outline: 'rgba(255,255,255,0.92)', bold: true, tier: 'major' });
+    let y = roof?.custom === 'peter-jones' ? UPPER_TOP + 1.3 : roof ? roof.h + 0.6 : Y.main + 0.4;
+    let { x, z } = m;
+    // The fountain's name lies on the paving beside it rather than through the statue.
+    let size = 9.5;
+    if (m.name === 'Venus Fountain' && OSM.square) {
+      const ax = OSM.square.axis;
+      x += Math.cos(ax) * 14; z += Math.sin(ax) * 14; y = SQUARE_Y + 0.1; size = 2.2;
+    }
+    out.push({ text: m.name, x, z, y, angle: m.name === 'Venus Fountain' && OSM.square ? -OSM.square.axis : 0, size, color: '#2e2a26', outline: 'rgba(255,255,255,0.92)', bold: true, tier: 'major' });
   }
   const H = HALF;
   out.push({ text: 'Chelsea Mini City', x: -H + 120, z: H + 16, y: 0.05, angle: 0, size: 12, color: '#fbf3e6', outline: 'rgba(70,45,30,0.9)', bold: true, tier: 'plinth' });
@@ -226,5 +236,6 @@ export const osmMap: GameMap = {
     'Development plots are fictional redevelopment opportunities, not claims that real properties are vacant or available.',
   legacyPlotMap: OSM.legacyPlotMap,
   previousPlotMap: OSM.previousPlotMap,
+  nature: OSM.square ? () => buildSquareNature(OSM.square!) : undefined,
   decals: () => OSM.landmarkModels.filter((m) => m.model === 'peter-jones').flatMap((m) => peterJonesDecals(m)),
 };

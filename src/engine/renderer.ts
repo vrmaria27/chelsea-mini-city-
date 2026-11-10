@@ -79,12 +79,103 @@ void main() {
   outColor = vec4(c.rgb, c.a * uAlpha);
 }`;
 
+// Nature shader: trees (vertex-coloured clumps or alpha-tested leaf cards) and water.
+// Vertex layout: pos3, normal3, colour3, extra4 = (u, v, sway weight 0..1, phase).
+// Sway moves only vertices with weight > 0 (twigs and leaves), with a per-tree phase, so trunks stay
+// still and neighbouring trees never move in step. uSway = 0 turns all motion off (reduced motion).
+const NATURE_VS = `#version 300 es
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec3 aNormal;
+layout(location=2) in vec3 aColor;
+layout(location=3) in vec4 aExtra;
+uniform mat4 uViewProj;
+uniform mat4 uModel;
+uniform highp float uTime;
+uniform float uSway;
+out vec3 vColor;
+out vec3 vNormal;
+out vec2 vUV;
+out vec3 vPos;
+void main() {
+  vec3 p = aPos;
+  float w = aExtra.z * uSway;
+  float ph = aExtra.w;
+  float slow = sin(uTime * 0.9 + ph) + 0.35 * sin(uTime * 2.3 + ph * 1.7);
+  float flutter = sin(uTime * 6.1 + ph * 9.0 + aPos.y * 1.3) * 0.25;
+  p.x += w * (0.16 * slow + 0.05 * flutter);
+  p.z += w * (0.11 * cos(uTime * 0.77 + ph * 1.3) + 0.05 * flutter);
+  p.y += w * 0.04 * flutter;
+  vColor = aColor;
+  vNormal = mat3(uModel) * aNormal;
+  vUV = aExtra.xy;
+  vPos = aPos;
+  gl_Position = uViewProj * uModel * vec4(p, 1.0);
+}`;
+
+const NATURE_FS = `#version 300 es
+precision mediump float;
+uniform highp float uTime;
+in vec3 vColor;
+in vec3 vNormal;
+in vec2 vUV;
+in vec3 vPos;
+uniform vec3 uSunDir;
+uniform int uMode;        // 0 clumps, 1 leaf cards (alpha-tested), 2 water, 3/4 overdraw count (with/without alpha test)
+uniform sampler2D uTex;
+uniform float uA2C;       // 1 when alpha-to-coverage is enabled (sharpened alpha), else 0 (hard test)
+out vec4 outColor;
+vec3 lightFor(vec3 n, float trans) {
+  float sun = max(dot(n, uSunDir), 0.0);
+  float sky = 0.5 + 0.5 * n.y;
+  vec3 l = mix(vec3(0.50, 0.47, 0.45), vec3(0.74, 0.76, 0.80), sky) + vec3(0.52, 0.47, 0.40) * sun;
+  // cheap translucency: light through leaves facing away from the sun
+  l += vec3(0.20, 0.24, 0.08) * trans * max(dot(-n, uSunDir), 0.0);
+  return l;
+}
+void main() {
+  vec3 n = normalize(vNormal);
+  if (uMode == 4) { outColor = vec4(1.0 / 64.0, 0.0, 0.0, 1.0); return; }
+  if (uMode == 2) {
+    // water: gentle moving ripples with a restrained highlight
+    float r1 = sin(vPos.x * 3.1 + uTime * 1.6) * sin(vPos.z * 2.7 - uTime * 1.2);
+    float r2 = sin((vPos.x + vPos.z) * 5.3 - uTime * 2.4);
+    float hi = smoothstep(0.35, 1.0, r1 * 0.6 + r2 * 0.4);
+    vec3 c = vColor * lightFor(n, 0.0) * (0.94 + 0.06 * r2) + vec3(0.12, 0.14, 0.15) * hi;
+    outColor = vec4(c, 0.78);
+    return;
+  }
+  float a = 1.0;
+  vec3 base = vColor;
+  if (uMode == 1 || uMode == 3) {
+    vec4 t = texture(uTex, vUV);
+    if (uA2C > 0.5) {
+      a = clamp((t.a - 0.45) / max(fwidth(t.a), 0.0001) + 0.5, 0.0, 1.0);
+      if (a < 0.02) discard;
+    } else if (t.a < 0.5) discard;
+    base *= t.rgb;
+    if (!gl_FrontFacing) n = -n;
+  }
+  if (uMode == 3) { outColor = vec4(1.0 / 64.0, 0.0, 0.0, 1.0); return; }
+  float trans = uMode == 0 ? 0.6 : 1.0;
+  outColor = vec4(base * lightFor(n, trans), a);
+}`;
+
+export interface NatureDraw {
+  mode: 0 | 1 | 2 | 3 | 4;
+  time: number;
+  sway: number;
+  texture?: WebGLTexture;
+  /** Overdraw modes only: keep the depth test (counts fragments that pass it, in submission order). */
+  depth?: boolean;
+  doubleSided?: boolean;
+}
+
 export interface Mesh {
   vao: WebGLVertexArrayObject;
   buffer: WebGLBuffer;
   count: number;
   mode: number;
-  kind: 'lit' | 'tex';
+  kind: 'lit' | 'tex' | 'nature';
 }
 
 export interface InstancedMesh {
@@ -116,6 +207,9 @@ export class Renderer {
   private lit: Program;
   private tex: Program;
   private inst: Program;
+  private nature: Program;
+  /** True when the default framebuffer is multisampled (alpha-to-coverage then softens leaf edges). */
+  msaa = false;
   private viewProj: Mat4 = new Float32Array(16);
   sunDir: [number, number, number];
 
@@ -126,6 +220,8 @@ export class Renderer {
     this.lit = this.program(LIT_VS, LIT_FS, ['uViewProj', 'uModel', 'uSunDir', 'uTint', 'uAlpha', 'uUnlit']);
     this.tex = this.program(TEX_VS, TEX_FS, ['uViewProj', 'uModel', 'uTex', 'uAlpha']);
     this.inst = this.program(INST_VS, LIT_FS, ['uViewProj', 'uModel', 'uSunDir', 'uTint', 'uAlpha', 'uUnlit']);
+    this.nature = this.program(NATURE_VS, NATURE_FS, ['uViewProj', 'uModel', 'uSunDir', 'uTime', 'uSway', 'uMode', 'uTex', 'uA2C']);
+    this.msaa = (gl.getParameter(gl.SAMPLES) as number) > 1;
     const s = [0.45, 0.8, 0.4];
     const l = Math.hypot(s[0], s[1], s[2]);
     this.sunDir = [s[0] / l, s[1] / l, s[2] / l];
@@ -184,6 +280,42 @@ export class Renderer {
     });
     gl.bindVertexArray(null);
     return { vao, buffer, count: data.length / stride, mode: mode ?? gl.TRIANGLES, kind };
+  }
+
+  /** Creates a nature mesh from interleaved [pos3, normal3, color3, extra4] data. */
+  natureMesh(data: Float32Array): Mesh {
+    return this.mesh(data, 13, [3, 3, 3, 4], 'nature');
+  }
+
+  drawNature(mesh: Mesh, model: Mat4, o: NatureDraw): void {
+    if (!mesh.count) return;
+    const gl = this.gl;
+    const { prog, u } = this.nature;
+    gl.useProgram(prog);
+    gl.uniformMatrix4fv(u.uViewProj, false, this.viewProj);
+    gl.uniformMatrix4fv(u.uModel, false, model);
+    gl.uniform3fv(u.uSunDir, this.sunDir);
+    gl.uniform1f(u.uTime, o.time);
+    gl.uniform1f(u.uSway, o.sway);
+    gl.uniform1i(u.uMode, o.mode);
+    const a2c = o.mode === 1 && this.msaa;
+    gl.uniform1f(u.uA2C, a2c ? 1 : 0);
+    if (o.texture) {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, o.texture);
+      gl.uniform1i(u.uTex, 0);
+    }
+    if (o.mode === 2) this.blend(true);
+    if (o.mode >= 3) { gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE); if (!o.depth) gl.disable(gl.DEPTH_TEST); }
+    if (a2c) gl.enable(gl.SAMPLE_ALPHA_TO_COVERAGE);
+    if (o.doubleSided) gl.disable(gl.CULL_FACE);
+    gl.bindVertexArray(mesh.vao);
+    gl.drawArrays(mesh.mode, 0, mesh.count);
+    gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);
+    gl.enable(gl.CULL_FACE);
+    gl.enable(gl.DEPTH_TEST);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    this.blend(false);
   }
 
   /** Base geometry ([pos3, normal3, color3]) drawn many times; instance data is [x, y, z, yaw, r, g, b]. */

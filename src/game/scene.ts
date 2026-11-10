@@ -15,6 +15,7 @@ import {
 } from './cityModel';
 import type { Game } from './game';
 import { NeighbourhoodLife } from './life';
+import { drawLeafAtlas } from '../map/landmarks/leafAtlas';
 import { InspectorPanel, Tooltip, WorldPanel, type Action } from './panel';
 
 export const SCALE_MIN = 0.6;
@@ -72,6 +73,10 @@ export class CityScene {
   private plotsMesh: Mesh;
   private labelMesh: Mesh;
   private decals: { tex: WebGLTexture; mesh: Mesh }[] = [];
+  /** Trees and water (nature shader). Low detail swaps leaf cards for opaque clumps. */
+  private nature: { branches: Mesh; core: Mesh; cards: Mesh; lowB: Mesh; lowF: Mesh; water: Mesh; leaf: WebGLTexture } | null = null;
+  /** Triangle counts of the nature layers (for checks and the README). */
+  natureStats: Record<string, number> | null = null;
   private minorLabelMesh: Mesh;
   /** Minor street labels are hidden when the model is far away (normalised distance). */
   showMinorLabels = true;
@@ -142,6 +147,15 @@ export class CityScene {
     this.minorLabelMesh = r.texMesh(this.labels.minor);
     this.decals = (map.decals?.() ?? []).map((d) => ({ tex: r.createTexture(d.canvas), mesh: r.texMesh(d.data) }));
     this.plotLabelMesh = r.texMesh(new Float32Array(0));
+    const nat = map.nature?.();
+    if (nat) {
+      this.nature = {
+        branches: r.natureMesh(nat.branches), core: r.natureMesh(nat.core), cards: r.natureMesh(nat.cards),
+        lowB: r.natureMesh(nat.lowBranches), lowF: r.natureMesh(nat.lowFoliage), water: r.natureMesh(nat.water),
+        leaf: r.createTexture(drawLeafAtlas()),
+      };
+      this.natureStats = nat.stats;
+    }
     for (const p of map.plots) this.outlines.set(p.id, r.litMesh(siteOutline(p).toFloat32()));
     this.beaconMesh = r.litMesh(siteBeacon().toFloat32());
     this.ringMesh = r.litMesh(radiusRing(RULES.effectRadius).toFloat32());
@@ -305,6 +319,18 @@ export class CityScene {
     r.drawLit(this.staticMesh, this.modelM);
     r.drawLit(this.plotsMesh, this.modelM);
     for (const d of this.decals) r.drawTex(d.mesh, this.modelM, d.tex);
+    if (this.nature) {
+      const n = this.nature, time = (now / 1000) % 3600, sway = this.reducedMotion ? 0 : 1;
+      if (this.lowDetail) {
+        r.drawNature(n.lowB, this.modelM, { mode: 0, time, sway });
+        r.drawNature(n.lowF, this.modelM, { mode: 0, time, sway });
+      } else {
+        // opaque first (fills depth so most card fragments behind are rejected), then alpha-tested cards
+        r.drawNature(n.branches, this.modelM, { mode: 0, time, sway });
+        r.drawNature(n.core, this.modelM, { mode: 0, time, sway });
+        r.drawNature(n.cards, this.modelM, { mode: 1, time, sway, texture: n.leaf, doubleSided: true });
+      }
+    }
     if (!this.lowDetail) this.life.draw(this.modelM);
 
     for (const p of pointers) {
@@ -319,6 +345,8 @@ export class CityScene {
       }
     }
 
+    // water last among world geometry: it is the only blended nature layer
+    if (this.nature) r.drawNature(this.nature.water, this.modelM, { mode: 2, time: (now / 1000) % 3600, sway: this.reducedMotion ? 0 : 1 });
     r.drawTex(this.labelMesh, this.modelM, this.labelTex);
     if (this.showMinorLabels) r.drawTex(this.minorLabelMesh, this.modelM, this.labelTex);
     r.drawTex(this.plotLabelMesh, this.modelM, this.labelTex);

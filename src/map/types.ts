@@ -65,6 +65,8 @@ export interface GameMap {
   notes: string;
   /** Textured details (e.g. landmark signage) in map space, drawn with the model. */
   decals?: () => { canvas: HTMLCanvasElement; data: Float32Array }[];
+  /** Animated nature layers (trees and water), drawn with the nature shader. */
+  nature?: () => import('./landmarks/sloaneSquare').SquareNature;
   /** Old plot id → this map's plot id (for migrating saves from the legacy map). */
   legacyPlotMap?: Record<string, string>;
   /** Plot ids of the previous version of this map → current ids (for migrating saves). */

@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm test && npm run build",
     "import:map:fetch": "node scripts/osm/fetch.mjs --out data/osm/raw.json",
-    "import:map": "node scripts/osm/process.mjs data/osm/raw.json src/map/osm/chelsea-osm.json"
+    "import:map": "node scripts/osm/process.mjs data/osm/raw.json src/map/osm/chelsea-osm.json",
+    "lab:trees": "esbuild src/lab/treeLab.ts --bundle --format=iife --outfile=lab/lab.js --servedir=lab"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
