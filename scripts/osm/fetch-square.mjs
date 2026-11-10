@@ -8,7 +8,25 @@ import { dirname } from 'node:path';
 export const SQUARE_BBOX = { south: 51.4914, west: -0.1600, north: 51.4936, east: -0.1552 };
 const out = process.argv.includes('--out') ? process.argv[process.argv.indexOf('--out') + 1] : 'data/osm/square-raw.json';
 const { south, west, north, east } = SQUARE_BBOX;
-const query = `[out:json][timeout:120][bbox:${south},${west},${north},${east}];
+// --buildings: every building, building part and shop/amenity node around the square, with full member
+// geometry for multipolygon relations (the main extract has none), for the perimeter reconstruction.
+const buildingsMode = process.argv.includes('--buildings');
+const buildingQuery = `[out:json][timeout:120][bbox:${south},${west},${north},${east}];
+(
+  way["building"];
+  way["building:part"];
+  relation["building"];
+  relation["building:part"];
+  node["shop"];
+  node["amenity"];
+  node["office"];
+  node["tourism"];
+  node["railway"];
+  node["public_transport"];
+  node["entrance"];
+);
+out geom tags meta;`;
+const squareQuery = `[out:json][timeout:120][bbox:${south},${west},${north},${east}];
 (
   nwr["natural"];
   nwr["amenity"];
@@ -28,6 +46,7 @@ const query = `[out:json][timeout:120][bbox:${south},${west},${north},${east}];
   nwr["genus"];
 );
 out geom tags meta;`;
+const query = buildingsMode ? buildingQuery : squareQuery;
 const endpoints = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
