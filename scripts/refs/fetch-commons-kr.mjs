@@ -37,6 +37,7 @@ const SEARCH = [
   'Bywater Street Chelsea', 'Anderson Street Chelsea', 'Lincoln Street Chelsea', 'Blacklands Terrace', 'Cheltenham Terrace Chelsea',
   'Tryon Street Chelsea', 'Kings Walk Chelsea', 'Sidney Smith Buildings', "King's Road Chelsea Marks and Spencer", 'Whitelands House Chelsea',
   "Royal Avenue House King's Road", 'Walpole Street Chelsea', 'Mitre House Chelsea', "King's Road Chelsea 1960s", "King's Road Chelsea listed",
+  'Markham Arms Chelsea', 'Chelsea Drugstore', "120 King's Road", "King's Road Chelsea 2025", "King's Road Chelsea 2026", "King's Road Chelsea 2024", 'Sloane Square south side',
 ];
 for (const term of SEARCH) {
   const r = await q({ action: 'query', list: 'search', srsearch: term, srnamespace: '6', srlimit: '40' });
@@ -66,7 +67,15 @@ for (const m of got) {
   if (m.how === 'search' && m.lat !== null && !(m.lat > 51.4880 && m.lat < 51.4930 && m.lon > -0.1660 && m.lon < -0.1575)) continue;
   if (n >= 260) break;
   try {
-    const buf = Buffer.from(await (await fetch(m.thumb, { headers: UA })).arrayBuffer());
+    // Commons rate-limits bursts: pace the downloads and keep only real JPEG/PNG data
+    let buf = null;
+    for (let i = 0; i < 5 && !buf; i++) {
+      await new Promise((r) => setTimeout(r, 1500 + i * 4000));
+      const res = await fetch(m.thumb, { headers: UA });
+      const b = Buffer.from(await res.arrayBuffer());
+      if (res.ok && (b[0] === 0xff || b[0] === 0x89)) buf = b;
+    }
+    if (!buf) { console.warn('skipped', m.title); continue; }
     m.file = `${String(++n).padStart(3, '0')}.jpg`;
     writeFileSync(`${out}/${m.file}`, buf);
     meta.push(m);
