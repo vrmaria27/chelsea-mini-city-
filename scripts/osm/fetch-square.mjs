@@ -62,7 +62,21 @@ const squareQuery = `[out:json][timeout:120][bbox:${south},${west},${north},${ea
   nwr["building:part"];
 );
 out geom tags meta;`;
-const query = buildingsMode ? buildingQuery : squareQuery;
+// King's Road: a lighter detail query (street furniture and trees along the road, not every area tag)
+const krQuery = `[out:json][timeout:180][bbox:${south},${west},${north},${east}];
+(
+  node["natural"="tree"];
+  node["highway"~"street_lamp|crossing|traffic_signals|bus_stop"];
+  node["barrier"];
+  node["amenity"~"post_box|bench|bicycle_parking|telephone|waste_basket|bicycle_rental"];
+  way["highway"~"footway|pedestrian|primary|secondary|tertiary|residential|service"];
+  way["barrier"];
+  way["leisure"~"garden|park"];
+  way["landuse"="grass"];
+  way["area:highway"];
+);
+out geom tags meta;`;
+const query = buildingsMode ? buildingQuery : area === 'kr' ? krQuery : squareQuery;
 const endpoints = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
