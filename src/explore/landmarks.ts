@@ -77,15 +77,27 @@ export const LANDMARKS: readonly Landmark[] = [
   },
   {
     id: 'way/5317958', name: 'Saatchi Gallery',
-    description: 'Contemporary art gallery in the Duke of York’s Headquarters, a building of 1801 by John Sanders. The gallery moved here in 2008.',
-    x: 87, z: 58.5, pinY: 22, street: null,
-    sources: [WIKI('Saatchi_Gallery'), { title: 'Saatchi Gallery (Britain Express)', url: 'https://www.britainexpress.com/London/saatchi-gallery.htm' }],
+    description: 'Contemporary art gallery in the Duke of York’s Headquarters, a building of 1801 by John Sanders: yellow brick, three storeys, with a stone pedimented Roman Doric portico. The gallery moved here in 2008. Grade II* listed.',
+    x: 87, z: 58.5, pinY: 22, street: { x: -22, z: 64, yaw: -1.609 }, pitch: 0.06,
+    sources: [HE(1266717, "Duke of York's Headquarters"), WIKI('Saatchi_Gallery'), { title: 'Saatchi Gallery (Britain Express)', url: 'https://www.britainexpress.com/London/saatchi-gallery.htm' }],
+  },
+  {
+    id: 'way/5317958#entrance', name: 'Saatchi Gallery: the portico',
+    description: 'The entrance portico: four Roman Doric columns in stone under a pediment, with the building’s name, Duke of York’s Headquarters, on the frieze.',
+    x: 74.5, z: 67.7, pinY: 16, street: { x: 68.6, z: 72.4, yaw: -0.903 }, pitch: 0.42,
+    sources: [HE(1266717, "Duke of York's Headquarters")],
   },
   {
     id: 'way/5318345', name: 'Duke of York Square',
-    description: 'Pedestrian square off King’s Road on part of the former Duke of York’s Headquarters site, which was sold by the Ministry of Defence in 2000.',
-    x: -10.6, z: 16.6, pinY: 10, street: null,
-    sources: [{ title: 'Saatchi Gallery, Chelsea (urban75)', url: 'https://www.urban75.org/blog/out-of-focus-photography-exhibition-at-the-saatchi-gallery-chelsea/' }],
+    description: 'Pedestrian square off King’s Road on part of the former Duke of York’s Headquarters site, which was sold by the Ministry of Defence in 2000. A statue of Sir Hans Sloane stands in the square.',
+    x: -22, z: 24, pinY: 10, street: { x: -28, z: 36, yaw: -0.753 }, pitch: 0.05,
+    sources: [{ title: 'Saatchi Gallery, Chelsea (urban75)', url: 'https://www.urban75.org/blog/out-of-focus-photography-exhibition-at-the-saatchi-gallery-chelsea/' }, { title: 'Duke of York Square revisited (Studio PDP)', url: 'https://studiopdp.com/blog/news-duke-of-york-square-revisited' }],
+  },
+  {
+    id: 'way/5318345#kings-road', name: 'Duke of York Square from King’s Road',
+    description: 'The square opens directly off the south side of King’s Road, with the curved listed wall of the gallery grounds beyond.',
+    x: -20, z: 15, pinY: 8, street: { x: -36, z: 10, yaw: -1.79 }, pitch: 0.02,
+    sources: [{ title: 'Duke of York Square revisited (Studio PDP)', url: 'https://studiopdp.com/blog/news-duke-of-york-square-revisited' }, { title: "Nex's King's Road café pavilion (RIBA Journal)", url: 'https://ribaj.com/buildings/kings-road-cafe-pavilion-duke-of-yorks-square-public-private-space-nex-jan-carlos-kucharek' }],
   },
   {
     id: 'way/630720415', name: 'Royal Avenue',

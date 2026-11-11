@@ -2,7 +2,7 @@
 
 Explore a reconstruction of the streets around **Sloane Square, King's Road and Duke of York Square** in Chelsea, London: first as a tabletop miniature, then at street level. It runs on **Meta Quest 3** (WebXR in the Quest Browser) and on desktop.
 
-> **Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright)** (ODbL 1.0). The buildings around Sloane Square and Peter Jones are hand-built procedural models based on photographs and published descriptions; elsewhere buildings are approximate masses at their mapped heights. It is an approximate model, not a photorealistic one.
+> **Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright)** (ODbL 1.0). The buildings around Sloane Square and Duke of York Square, the Saatchi Gallery and Peter Jones are hand-built procedural models based on photographs and published descriptions; elsewhere buildings are approximate masses at their mapped heights. It is an approximate model, not a photorealistic one.
 
 | Miniature | Street level |
 |---|---|
@@ -18,7 +18,7 @@ This project began as a city-builder ("Chelsea Mini City"). That version is pres
 2. **Choose a spot.** Click the pavement or the square, or pick a place from the list.
 3. **Go to street level** and look around. **Back to miniature** (or `M`) returns.
 
-Street level covers the area around Sloane Square, the best-reconstructed part of the model. Places further away (the Saatchi Gallery, Royal Avenue, Burton Court and others) are shown on the miniature with a pin.
+Street level covers the two best-reconstructed areas: Sloane Square, and Duke of York Square with the Saatchi Gallery forecourt. Places further away (Royal Avenue, Burton Court and others) are shown on the miniature with a pin.
 
 | | Desktop | VR (Quest 3) |
 |---|---|---|
@@ -157,6 +157,26 @@ Each has its own façade definition, based on the RBKC Conservation Area Apprais
 
 The inventory, references, coverage table (with unresolved frontages), performance figures and a headset checklist are in [docs/square-buildings.md](docs/square-buildings.md).
 
+## Duke of York Square and the Saatchi Gallery
+
+The Saatchi Gallery (the Duke of York's Headquarters, 1801) is modelled from its Historic England listing and dated, openly licensed photographs:
+- a 3 + 13 + 3 window front with an arched ground floor and a balustraded band;
+- a Roman Doric portico with pediment and frieze lettering;
+- hipped roofs and stacks.
+
+Around it are:
+- the former chapel, the Vardo pavilion, the King's Road corner block, Queripel House and the north-west wing;
+- the listed curved wall with its gateway and trophy;
+- the Yorkstone square with the statue of Sir Hans Sloane, the splash-pad fountain, benches, cycle stands and OSM-mapped plane trees.
+
+You can walk the square and the gallery forecourt; the track and playing field are private and fenced.
+
+| From King's Road | The portico |
+|---|---|
+| ![Duke of York Square from King's Road](docs/doy-kings-road.jpg) | ![Saatchi Gallery portico](docs/doy-entrance.jpg) |
+
+The reference inventory, observed vs estimated features, comparison screenshots, performance and a headset checklist are in [docs/duke-of-york-square.md](docs/duke-of-york-square.md).
+
 ## Install, run, build
 
 Requires **Node.js 20+**.
@@ -216,14 +236,14 @@ public/             index.html (HUD markup and styles)
 
 **Technical notes:**
 - **Renderer.** A small hand-written WebGL2 + WebXR renderer bundled with esbuild, with no runtime dependencies.
-- **One scene for both views.** The static scenery is built once and split into 4 × 4 tiles for frustum culling. The miniature and street level draw the same meshes through different model matrices. In VR the model is placed under you; your viewpoint is never moved.
+- **One scene for both views.** The static scenery is built once and split into 6 × 6 tiles for frustum culling. The miniature and street level draw the same meshes through different model matrices. In VR the model is placed under you; your viewpoint is never moved.
 - **Lighting.** Hemisphere + sun, with no shadows, reflections or post-processing.
 - **Measurements.** Before/after figures are in [docs/explorer.md](docs/explorer.md#performance). Frame rate on Quest 3 has **not** been measured.
 
 ## Known limitations
 
 - Not yet tested on a Quest 3 headset (controllers, hand panel, teleport comfort and performance are unverified).
-- Street level is limited to the area around Sloane Square. Elsewhere the model is for viewing as a miniature.
+- Street level is limited to Sloane Square and Duke of York Square. Elsewhere the model is for viewing as a miniature.
 - Most buildings away from the square are approximate masses with flat roofs. The full list, ordered by impact on realism, is in [docs/explorer.md](docs/explorer.md#remaining-visual-approximations-largest-impact-on-realism-first).
 - Road widths are class estimates, so some pavements are narrower than real.
 - Hand tracking without controllers isn't specifically supported.

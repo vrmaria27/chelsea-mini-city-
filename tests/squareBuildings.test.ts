@@ -42,7 +42,7 @@ test('no duplicate geometry: reconstructed footprints get no generic extrusion, 
   const b = new MeshBuilder();
   const r = buildSquareBuildings(b, OSM.buildings as never, (OSM as unknown as { squareRoofs: Record<string, never> }).squareRoofs, square.ring);
   assert.equal(new Set(r.built).size, r.built.length);
-  assert.equal(r.built.length, custom.length);
+  assert.equal(r.built.filter((id) => custom.some((c) => c.id === id)).length, custom.length);
   // Peter Jones keeps its own model
   assert.equal(OSM.buildings.find((x) => x.id === 'w28682626')?.custom, 'peter-jones');
 });
@@ -96,8 +96,8 @@ test('former game sites are ordinary masses again and never replace a reconstruc
 test('the reconstruction stays within a sensible triangle budget', () => {
   const b = new MeshBuilder();
   const r = buildSquareBuildings(b, OSM.buildings as never, (OSM as unknown as { squareRoofs: Record<string, never> }).squareRoofs, square.ring);
-  const total = b.vertexCount / 3;
-  console.log(`  perimeter models: ${total} triangles, ${r.signs.length} signs; ${JSON.stringify(r.triangles)}`);
+  const total = Object.entries(r.triangles).filter(([m]) => m.startsWith('square:')).reduce((n, [, t]) => n + t, 0);
+  console.log(`  perimeter models: ${total} triangles; ${JSON.stringify(Object.fromEntries(Object.entries(r.triangles).filter(([m]) => m.startsWith('square:'))))}`);
   assert.ok(total < 60000);
-  for (const [m, n] of Object.entries(r.triangles)) assert.ok(n < 12000, `${m}: ${n}`);
+  for (const [m, n] of Object.entries(r.triangles)) if (m.startsWith('square:')) assert.ok(n < 12000, `${m}: ${n}`);
 });

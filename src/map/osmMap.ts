@@ -7,6 +7,7 @@ import { P, tree } from './palette';
 import { UPPER_TOP, buildPeterJones, peterJonesDecals, type LandmarkModelData } from './landmarks/peterJones';
 import { SQUARE_Y, buildSloaneSquare, buildSquareNature, type SquareData } from './landmarks/sloaneSquare';
 import { buildSquareBuildings, squareSignDecal, type RoofInsets, type SignQuad } from './landmarks/squareBuildings';
+import { DOY_PLAZA_IDS, addDoyNature, buildDukeOfYorkSquare, type DoyData } from './landmarks/dukeOfYorkSquare';
 
 export interface OsmRoad { id: number; name: string | null; hw: string; cls: 'main' | 'street' | 'service' | 'pedestrian' | 'path'; w: number; pts: number[]; sidewalk?: boolean }
 export interface OsmArea { id: string; kind: 'green' | 'plaza' | 'carriageway' | 'parking'; name: string | null; ring: number[]; tris: number[] }
@@ -26,6 +27,7 @@ interface OsmData {
   landmarkModels: (LandmarkModelData & { model: string; name: string })[];
   square: SquareData | null;
   squareRoofs: Record<string, RoofInsets>;
+  doy: DoyData | null;
 }
 
 export const OSM = data as unknown as OsmData;
@@ -190,8 +192,15 @@ function northArrow(b: MeshBuilder, x: number, z: number, y: number): void {
 }
 
 let squareSigns: SignQuad[] = [];
+/** Green areas that get no decorative scatter trees (the Duke of York's HQ playing field is open grass). */
+const NO_SCATTER = new Set(['w1368124984']);
+/** Triangle counts of the Duke of York Square layers (for checks and docs). */
+export let doyStats: Record<string, number> = {};
+const doyPlaza = () => OSM.areas.filter((a) => DOY_PLAZA_IDS.includes(a.id)).map((a) => ({ ring: a.ring, tris: a.tris }));
 /** Label heights just above each reconstructed landmark's own roofline (map metres). */
-const SQUARE_LABEL_Y: Record<string, number> = { 'square:royal-court': 20.5, 'square:holy-trinity': 31.5, 'square:hotel': 26, 'square:station': 28 };
+const SQUARE_LABEL_Y: Record<string, number> = { 'square:royal-court': 20.5, 'square:holy-trinity': 31.5, 'square:hotel': 26, 'square:station': 28, 'doy:saatchi': 16.5 };
+/** Labels moved off a model onto open ground beside it (map metres). */
+const LABEL_AT: Record<string, [number, number]> = { 'Duke of York Square': [-26, 27] };
 
 /** Wooden model base, north arrow and lettering: miniature view only. */
 function buildPlinth(): MeshBuilder {
@@ -227,10 +236,17 @@ function buildStatic(): MeshBuilder {
   if (OSM.square) buildSloaneSquare(b, OSM.square);
   // Sloane Square perimeter: individual reconstructions replace the generic extrusions of their footprints
   if (OSM.square) squareSigns = buildSquareBuildings(b, OSM.buildings, OSM.squareRoofs ?? {}, OSM.square.ring).signs;
+  // Duke of York Square and the gallery forecourt (the gallery and its neighbours are built above)
+  if (OSM.doy) {
+    const r = buildDukeOfYorkSquare(b, OSM.doy, doyPlaza(), OSM.buildings.find((x) => x.id === 'w5317958')?.rings[0]);
+    squareSigns = squareSigns.concat(r.signs);
+    doyStats = r.stats;
+  }
   // Decorative trees inside green spaces (positions are not sourced; deterministic scatter)
   const rand = rng(51491);
   for (const a of OSM.areas) {
     if (a.kind !== 'green') continue;
+    if (NO_SCATTER.has(a.id)) continue; // playing field: open grass in photographs
     const xs = a.ring.filter((_, i) => i % 2 === 0), zs = a.ring.filter((_, i) => i % 2 === 1);
     const [x0, x1, z0, z1] = [Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)];
     const n = Math.min(40, Math.floor(Math.abs(ringArea(a.ring)) / 320));
@@ -260,8 +276,9 @@ function labels(): MapLabelDef[] {
     // Lay the name on the landmark's own roof, or on the ground for squares and parks.
     const roof = OSM.buildings.find((bl) => pointInRing(m.x, m.z, bl.rings[0]));
     // reconstructed square buildings are taller than their footprint height (roofs, gables, turrets)
-    let y = roof?.custom === 'peter-jones' ? UPPER_TOP + 1.3 : roof?.custom?.startsWith('square:') ? (SQUARE_LABEL_Y[roof.custom] ?? roof.h + 8) : roof ? roof.h + 0.6 : Y.main + 0.4;
+    let y = roof?.custom === 'peter-jones' ? UPPER_TOP + 1.3 : roof?.custom && SQUARE_LABEL_Y[roof.custom] ? SQUARE_LABEL_Y[roof.custom] : roof?.custom?.startsWith('square:') ? roof.h + 8 : roof ? roof.h + 0.6 : Y.main + 0.4;
     let { x, z } = m;
+    if (LABEL_AT[m.name]) { [x, z] = LABEL_AT[m.name]; y = Y.main + 0.4; }
     // The fountain's name lies on the paving beside it rather than through the statue.
     let size = 9.5;
     if (m.name === 'Venus Fountain' && OSM.square) {
@@ -290,7 +307,7 @@ export const osmMap: SceneMap = {
   notes:
     `Streets, public spaces, building footprints and landmark positions come from OpenStreetMap (retrieved ${OSM.meta.retrieved.slice(0, 10)}). ` +
     'Road widths without a width tag, building heights without height/levels tags, façade colours and trees outside Sloane Square are stylised estimates.',
-  nature: OSM.square ? () => buildSquareNature(OSM.square!) : undefined,
+  nature: OSM.square ? () => buildSquareNature(OSM.square!, OSM.doy ? (n) => addDoyNature(OSM.doy!, doyPlaza(), n) : undefined) : undefined,
   decals: () => {
     const out = OSM.landmarkModels.filter((m) => m.model === 'peter-jones').flatMap((m) => peterJonesDecals(m));
     const sq = squareSignDecal(squareSigns);
