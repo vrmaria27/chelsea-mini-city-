@@ -183,6 +183,17 @@ const CUSTOM_LANDMARKS = {
   w532534277: { id: 'square:33-lurgan-mansions', model: 'square:lurgan' },
   w532534279: { id: 'square:28-31', model: 'square:28-31' },
   w223451081: { id: 'landmark:holy-trinity', model: 'square:holy-trinity' },
+  // Duke of York Square and the Saatchi Gallery (see docs/duke-of-york-square.md).
+  w5317958: { id: 'landmark:saatchi-gallery', model: 'doy:saatchi' },
+  w124030230: { id: 'landmark:doy-chapel', model: 'doy:chapel' },
+  w124030215: { id: 'doy:vardo', model: 'doy:vardo' },
+  w124032943: { id: 'doy:corner-block', model: 'doy:corner' },
+  w124030228: { id: 'doy:queripel', model: 'doy:queripel' },
+  w124030204: { id: 'doy:left-wing-west', model: 'doy:left-wing' },
+  w124030200: { id: 'doy:left-wing-east', model: 'doy:left-wing' },
+  w124030209: { id: 'doy:grocer', model: 'doy:grocer' },
+  w753511834: { id: 'doy:ticket-kiosk', model: 'doy:kiosk' },
+  w899802879: { id: 'doy:canopy', model: 'doy:canopy' },
 };
 // Other footprints that belong to a protected landmark (Historic England lists 25 Cadogan Gardens as part of Peter Jones).
 const PROTECTED_WAYS = new Set([28682626, 1186000571, 12224305, 12224306]); // + listed Wyndham/Wellesley House (relations)
@@ -470,6 +481,113 @@ try {
   report.square = { area: square.area, trees: square.trees.length, benches: square.benches.length, lamps: square.lamps.length, cycleStands: square.cycleStands.length, memorial: !!memorial, drinkingFountain: !!drinking, kerbWays: kerbs.length, rings: rings.length };
 } catch (e) {
   report.warnings.push(`Sloane Square detail unavailable: ${e.message}`);
+}
+
+// ---- Duke of York Square and the Saatchi Gallery grounds --------------------------------------
+// Detail from a focused extract (scripts/osm/fetch-square.mjs --area doy → data/osm/doy-raw.json):
+// trees, the listed curved wall and gates, fences, benches, the splash-pad fountain, the Hans Sloane
+// statue, kerbs, footways (with surfaces), the running track and pitch. Positions are OSM's; sizes
+// and shapes are documented estimates (docs/duke-of-york-square.md).
+const DOY_FILE = 'data/osm/doy-raw.json';
+const DOY_BOX = { x0: -85, x1: 165, z0: -50, z1: 140 };
+let doy = null;
+try {
+  const dr = JSON.parse(readFileSync(DOY_FILE, 'utf8'));
+  const els = dr.elements;
+  const Pd = (g) => proj.toXZ(g.lat, g.lon);
+  const inBox = (q) => q[0] > DOY_BOX.x0 && q[0] < DOY_BOX.x1 && q[1] > DOY_BOX.z0 && q[1] < DOY_BOX.z1;
+  const r1 = (q) => [round1(q[0]), round1(q[1])];
+  const nodesD = (pred) => els.filter((e) => e.type === 'node' && pred(e.tags ?? {})).map((e) => ({ osm: `node/${e.id}`, p: Pd(e), tags: e.tags })).filter((n) => inBox(n.p));
+  const waysD = (pred) => els.filter((e) => e.type === 'way' && e.geometry && pred(e.tags ?? {})).map((e) => ({ osm: `way/${e.id}`, pts: e.geometry.map(Pd), tags: e.tags })).filter((w) => w.pts.some(inBox));
+  const pt = (n, extra = {}) => ({ osm: n.osm, x: round1(n.p[0]), z: round1(n.p[1]), ...extra });
+  const line = (w, extra = {}) => ({ osm: w.osm, pts: w.pts.flatMap(r1), ...extra });
+  const track = els.find((e) => e.type === 'relation' && e.tags?.leisure === 'track');
+  const trackRings = track ? track.members.filter((m) => m.geometry).map((m) => ({ role: m.role, pts: m.geometry.map(Pd) })) : [];
+  // chain the track's outer/inner member ways into rings
+  const chainRings = (parts) => {
+    const pool = parts.map((p) => p.slice()); const out = [];
+    const same = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.05;
+    while (pool.length) {
+      let c = pool.shift();
+      for (let grow = true; grow;) {
+        grow = false;
+        if (c.length > 2 && same(c[0], c[c.length - 1])) break;
+        const end = c[c.length - 1];
+        const k = pool.findIndex((w) => same(w[0], end) || same(w[w.length - 1], end));
+        if (k >= 0) { let w = pool.splice(k, 1)[0]; if (!same(w[0], end)) w = w.reverse(); c = c.concat(w.slice(1)); grow = true; }
+      }
+      if (c.length > 3) out.push(simplifyRing(c.slice(0, -1), 0.2));
+    }
+    return out;
+  };
+  const trackOuter = chainRings(trackRings.filter((m) => m.role === 'outer').map((m) => m.pts));
+  const trackInner = chainRings(trackRings.filter((m) => m.role === 'inner').map((m) => m.pts));
+  const pitchW = waysD((t) => t.leisure === 'pitch')[0];
+  const statue = nodesD((t) => t.tourism === 'artwork' && /Sloane/.test(t.name ?? ''))[0];
+  const fountain = nodesD((t) => t.amenity === 'fountain')[0];
+  doy = {
+    source: `OpenStreetMap (${DOY_FILE}, retrieved ${dr.retrieved}, OSM data as of ${dr.osm_base})`,
+    trees: nodesD((t) => t.natural === 'tree').map((n) => pt(n)),
+    walls: waysD((t) => t.barrier === 'wall').map((w) => line(w, { h: w.tags.height ? +w.tags.height : null })),
+    fences: waysD((t) => t.barrier === 'fence').map((w) => line(w, { h: w.tags.height ? +w.tags.height : null })),
+    gates: nodesD((t) => t.barrier === 'gate').map((n) => pt(n)),
+    benches: [...nodesD((t) => t.amenity === 'bench').map((n) => pt(n, { seats: n.tags.seats ? +n.tags.seats : null, backrest: n.tags.backrest ?? null })),
+      ...waysD((t) => t.amenity === 'bench').map((w) => line(w, { material: w.tags.material ?? null }))],
+    cycleStands: nodesD((t) => t.amenity === 'bicycle_parking').map((n) => pt(n, { capacity: +(n.tags.capacity ?? 6), kind: n.tags.bicycle_parking ?? null })),
+    lamps: nodesD((t) => t.highway === 'street_lamp').map((n) => pt(n)),
+    fountain: fountain ? pt(fountain, { kind: fountain.tags.fountain ?? null }) : null,
+    statue: statue ? pt(statue, { name: statue.tags.name }) : null,
+    kerbs: waysD((t) => t.barrier === 'kerb').map((w) => line(w)),
+    footways: waysD((t) => ['footway', 'pedestrian', 'steps'].includes(t.highway)).map((w) => line(w, { hw: w.tags.highway, surface: w.tags.surface ?? null, name: w.tags.name ?? null })),
+    track: trackOuter.length ? { osm: `relation/${track.id}`, outer: trackOuter.map((r) => r.flatMap(r1)), inner: trackInner.map((r) => r.flatMap(r1)) } : null,
+    pitch: pitchW ? { osm: pitchW.osm, ring: simplifyRing(pitchW.pts.slice(0, -1), 0.2).flatMap(r1) } : null,
+    entrances: nodesD((t) => !!t.entrance).map((n) => pt(n, { kind: n.tags.entrance })),
+  };
+  // Track surface (outer ring minus the inner field) and the field inside it, triangulated here.
+  if (doy.track) {
+    const toQ = (f) => { const q = []; for (let i = 0; i < f.length; i += 2) q.push([f[i], f[i + 1]]); return q; };
+    const outer = toQ(doy.track.outer[0]), inner = doy.track.inner.map(toQ);
+    doy.track.tris = triangulate(outer, inner).map(round1);
+    doy.track.innerTris = inner.length ? triangulate(inner[0]).map(round1) : [];
+  }
+  // Gallery forecourt: inside the listed curved wall, along the buildings' south-west faces and the
+  // gallery front, out to the far edge of the footpath in front of the gallery (path centreline + 2.5 m).
+  {
+    const wall = doy.walls.find((w) => w.h === 4);
+    const path = doy.footways.find((f) => f.osm === 'way/124031663');
+    const gal = buildings.find((bb) => bb.id === 'w5317958');
+    const left = buildings.find((bb) => bb.id === 'w124030204');
+    const quer = buildings.find((bb) => bb.id === 'w124030228');
+    if (wall && path && gal && left && quer) {
+      const Q = (f) => { const q = []; for (let i = 0; i < f.length; i += 2) q.push([f[i], f[i + 1]]); return q; };
+      const wq = Q(wall.pts); // (43.8,12.9) … (13.4,23.6)
+      const near = (ring, p) => Q(ring).reduce((bst, q) => (Math.hypot(q[0] - p[0], q[1] - p[1]) < Math.hypot(bst[0] - p[0], bst[1] - p[1]) ? q : bst));
+      const gq = Q(gal.rings[0]);
+      // gallery front corners: the extreme points along the front direction among the south-west-most vertices
+      const U = [0.619, 0.785], V = [0.785, -0.619];
+      const sOf = (q) => q[0] * U[0] + q[1] * U[1], wOf = (q) => q[0] * V[0] + q[1] * V[1];
+      const front = gq.filter((q) => wOf(q) < Math.min(...gq.map(wOf)) + 7);
+      const nw = front.reduce((m, q) => (sOf(q) < sOf(m) ? q : m)), se = front.reduce((m, q) => (sOf(q) > sOf(m) ? q : m));
+      const pq = Q(path.pts).filter((q) => sOf(q) <= sOf(se) + 8);
+      const off = pq.map((q, i) => {
+        const a = pq[Math.max(0, i - 1)], b = pq[Math.min(pq.length - 1, i + 1)];
+        let nx = -(b[1] - a[1]), nz = b[0] - a[0]; const l = Math.hypot(nx, nz) || 1; nx /= l; nz /= l;
+        if (nx * -V[0] + nz * -V[1] < 0) { nx = -nx; nz = -nz; } // away from the gallery (south-west)
+        return [q[0] + nx * 2.5, q[1] + nz * 2.5];
+      });
+      const ring = [...wq.slice().reverse().filter((_, i) => i > 0), wq[0]] // wall from its south end round to the north-east end
+        .concat([near(quer.rings[0], [55.1, 26.9]), near(left.rings[0], [62.7, 35.7]), nw, se])
+        .concat(off.slice().reverse())
+        .concat([wq[wq.length - 1]]);
+      // drop duplicates
+      const clean = ring.filter((q, i) => i === 0 || Math.hypot(q[0] - ring[i - 1][0], q[1] - ring[i - 1][1]) > 0.2);
+      const pr = simplifyRing(clean, 0.1);
+      doy.forecourt = { ring: pr.flatMap((q) => [round1(q[0]), round1(q[1])]), tris: triangulate(pr).map(round1) };
+    } else report.warnings.push('Duke of York Square: forecourt inputs missing');
+  }
+  report.doy = Object.fromEntries(Object.entries(doy).map(([k, v]) => [k, Array.isArray(v) ? v.length : !!v]));
+} catch (e) {
+  report.warnings.push(`Duke of York Square detail unavailable: ${e.message}`);
 }
 
 const blockedAreas = areas.filter((a) => a.kind !== 'parking').map((a) => { const q = []; for (let i = 0; i < a.ring.length; i += 2) q.push([a.ring[i], a.ring[i + 1]]); return q; });
@@ -809,7 +927,7 @@ function offsetRing(r, d) {
 }
 const squareRoofs = {};
 for (const bl of buildings) {
-  if (!bl.custom?.startsWith('square:')) continue;
+  if (!bl.custom?.startsWith('square:') && !bl.custom?.startsWith('doy:')) continue;
   const toPts = (fr) => { const q = []; for (let i = 0; i < fr.length; i += 2) q.push([fr[i], fr[i + 1]]); return q; };
   const outer = toPts(bl.rings[0]), holes = bl.rings.slice(1).map(toPts);
   const insets = {};
@@ -860,6 +978,7 @@ const out = {
   landmarkModels,
   square,
   squareRoofs,
+  doy,
 };
 mkdirSync(dirname(outFile), { recursive: true });
 writeFileSync(outFile, JSON.stringify(out));

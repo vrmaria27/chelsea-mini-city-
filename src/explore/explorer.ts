@@ -16,7 +16,7 @@ export type LandmarkResult =
   | { kind: 'none' };
 
 const REASONS: Record<Exclude<NavClass, 'ok'>, string> = {
-  outside: 'Street level is limited to the area around Sloane Square.',
+  outside: 'Street level is limited to the areas around Sloane Square and Duke of York Square.',
   building: 'That is inside a building. Choose the pavement or the square.',
   carriageway: 'That is the road. Choose the pavement or the square.',
   water: 'That is the fountain basin.',

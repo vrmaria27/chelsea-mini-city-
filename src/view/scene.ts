@@ -11,7 +11,7 @@ import { ExplorePanel } from './panel';
 
 /** Depth of the wooden plinth below street level (map metres) in the miniature. */
 const PLINTH_DEPTH = 16;
-const TILES = 4; // static mesh is split into TILES × TILES chunks for frustum culling
+const TILES = 6; // static mesh is split into TILES × TILES chunks for frustum culling
 
 export interface MiniatureView {
   anchor: { x: number; y: number; z: number; yaw: number };
@@ -242,7 +242,8 @@ export class ExplorerScene {
       const n = this.nature, time = opts.time % 3600, sway = this.reducedMotion ? 0 : 1;
       // Level of detail: leaf cards only when the trees are large enough on screen to matter.
       this.worldToMap(eye, this.v3);
-      const d = Math.hypot(this.v3[0] - 177, this.v3[1], this.v3[2] + 150) * this.unit;
+      // nearest detailed area: Sloane Square or Duke of York Square
+      const d = Math.min(Math.hypot(this.v3[0] - 177, this.v3[1], this.v3[2] + 150), Math.hypot(this.v3[0] - 30, this.v3[1], this.v3[2] - 40)) * this.unit;
       const cards = !this.lowDetail && (this.mode === 'street' || d < 0.55);
       if (!cards) {
         r.drawNature(n.lowB, this.modelM, { mode: 0, time, sway });

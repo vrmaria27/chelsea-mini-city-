@@ -79,7 +79,9 @@ which OSM footprints the site ids `k01`–`k22` referred to.
 `src/explore/nav.ts` decides where you can stand.
 
 **Inside the zone.** Street level is bounded to the well-reconstructed area: the square and everything within 38 m of
-its kerb (the façades all round it, the station forecourt and the south end of Sloane Street). Within that zone a point
+its kerb (the façades all round it, the station forecourt and the south end of Sloane Street). A second zone covers
+Duke of York Square, the Saatchi Gallery forecourt inside the curved wall, and 5 m round them; see
+[duke-of-york-square.md](duke-of-york-square.md#4-navigation-and-viewpoints). Within a zone a point
 is walkable if it is one of these:
 - the paved square;
 - a mapped plaza;
@@ -99,7 +101,7 @@ footprint, the view dims.
 
 ## Discovery
 
-The places menu (`src/explore/landmarks.ts`) lists the 14 landmarks in the scene, each with its verified name, a short
+The places menu (`src/explore/landmarks.ts`) lists the 16 landmarks in the scene, each with its verified name, a short
 statement and its sources:
 - **Seven are in the street-level area.** Selecting one moves you to a tested viewpoint after a brief fade (no flight
   through buildings). Each viewpoint is walkable, has room around it, has a clear line of sight to the landmark and has

@@ -92,7 +92,7 @@ function inset(r: Pt[], d: number): Pt[] {
 const norm2 = (v: Pt): Pt => { const l = Math.hypot(v[0], v[1]) || 1; return [v[0] / l, v[1] / l]; };
 
 /** Sutherland–Hodgman clip of a polygon against a convex ring. */
-function clipConvex(poly: Pt[], clip: Pt[]): Pt[] {
+export function clipConvex(poly: Pt[], clip: Pt[]): Pt[] {
   const s = signedArea(clip) > 0 ? 1 : -1;
   let out = poly;
   for (let i = 0; i < clip.length && out.length; i++) {
@@ -110,7 +110,7 @@ function clipConvex(poly: Pt[], clip: Pt[]): Pt[] {
 }
 
 /** Upward-facing convex polygon fan at height y. */
-function flatPoly(b: MeshBuilder, poly: Pt[], y: number, col: RGB): void {
+export function flatPoly(b: MeshBuilder, poly: Pt[], y: number, col: RGB): void {
   const ccwDown = signedArea(poly) > 0; // x east, z south: positive area = clockwise seen from above
   for (let i = 1; i + 1 < poly.length; i++) {
     const a = poly[0], p = poly[i], q = poly[i + 1];
@@ -120,7 +120,7 @@ function flatPoly(b: MeshBuilder, poly: Pt[], y: number, col: RGB): void {
 }
 
 /** Vertical wall along a ring between y0 and y1, facing outward. */
-function ringWall(b: MeshBuilder, r: Pt[], y0: number, y1: number, col: RGB, outward = true): void {
+export function ringWall(b: MeshBuilder, r: Pt[], y0: number, y1: number, col: RGB, outward = true): void {
   const s = (signedArea(r) > 0 ? 1 : -1) * (outward ? 1 : -1);
   for (let i = 0; i < r.length; i++) {
     const p = r[i], q = r[(i + 1) % r.length];
@@ -149,7 +149,7 @@ function prism(b: MeshBuilder, r: Pt[], y0: number, y1: number, side: RGB, top: 
 }
 
 /** Lathe (surface of revolution) from a profile of [radius, y] pairs; colours per ring. */
-function lathe(b: MeshBuilder, x: number, z: number, profile: [number, number][], n: number, colAt: (k: number) => RGB): void {
+export function lathe(b: MeshBuilder, x: number, z: number, profile: [number, number][], n: number, colAt: (k: number) => RGB): void {
   for (let k = 0; k + 1 < profile.length; k++) {
     const [r0, y0] = profile[k], [r1, y1] = profile[k + 1];
     const col = colAt(k);
@@ -162,7 +162,7 @@ function lathe(b: MeshBuilder, x: number, z: number, profile: [number, number][]
 }
 
 /** Tapered tube between two points (lit, flat shaded). */
-function limb(b: MeshBuilder, a: V3, c: V3, ra: number, rc: number, col: RGB, sides = 6): void {
+export function limb(b: MeshBuilder, a: V3, c: V3, ra: number, rc: number, col: RGB, sides = 6): void {
   const ax: V3 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
   const l = Math.hypot(ax[0], ax[1], ax[2]) || 1;
   const d: V3 = [ax[0] / l, ax[1] / l, ax[2] / l];
@@ -179,7 +179,7 @@ function limb(b: MeshBuilder, a: V3, c: V3, ra: number, rc: number, col: RGB, si
 }
 
 /** Ellipsoid blob (lit) for heads, conch, cushion. */
-function ellipsoid(b: MeshBuilder, c: V3, rx: number, ry: number, rz: number, col: RGB, n = 8, m = 5): void {
+export function ellipsoid(b: MeshBuilder, c: V3, rx: number, ry: number, rz: number, col: RGB, n = 8, m = 5): void {
   const P = (i: number, j: number) => { const th = (i / n) * Math.PI * 2, ph = (j / m) * Math.PI - Math.PI / 2; return [c[0] + Math.cos(ph) * Math.cos(th) * rx, c[1] + Math.sin(ph) * ry, c[2] + Math.cos(ph) * Math.sin(th) * rz]; };
   for (let j = 0; j < m; j++) for (let i = 0; i < n; i++) b.quad(P(i, j), P(i, j + 1), P(i + 1, j + 1), P(i + 1, j), col);
 }
@@ -426,7 +426,7 @@ export interface SquareNature {
   lowFoliage: Float32Array;
   lowBranches: Float32Array;
   water: Float32Array;
-  stats: { trees: number; branchTris: number; coreTris: number; cardTris: number; lowTris: number; waterTris: number };
+  stats: { trees: number; squareTrees: number; branchTris: number; coreTris: number; cardTris: number; lowTris: number; waterTris: number };
 }
 
 const hash = (s: string) => { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return (h >>> 0) % 100000; };
@@ -440,7 +440,10 @@ export function squareTrees(sq: SquareData) {
   });
 }
 
-export function buildSquareNature(sq: SquareData): SquareNature {
+export interface NatureSet { branches: NatureBuilder; core: NatureBuilder; cards: NatureBuilder; lowB: NatureBuilder; lowF: NatureBuilder; water: NatureBuilder }
+
+/** The square's trees and water; `extra` may add other areas' trees to the same layers (shared draw calls). */
+export function buildSquareNature(sq: SquareData, extra?: (n: NatureSet) => number): SquareNature {
   const branches = new NatureBuilder(), core = new NatureBuilder(), cards = new NatureBuilder();
   const lowF = new NatureBuilder(), lowB = new NatureBuilder();
   const Y = SQUARE_Y + 0.012;
@@ -453,10 +456,11 @@ export function buildSquareNature(sq: SquareData): SquareNature {
     buildClumpFoliage(lowF, sk, o, 0.3);
   }
   const water = fountainWater(sq);
+  const extraTrees = extra ? extra({ branches, core, cards, lowB, lowF, water }) : 0;
   const tri = (n: NatureBuilder) => n.vertexCount / 3;
   return {
     branches: branches.toFloat32(), core: core.toFloat32(), cards: cards.toFloat32(), lowFoliage: lowF.toFloat32(), lowBranches: lowB.toFloat32(), water: water.toFloat32(),
-    stats: { trees: sq.trees.length, branchTris: tri(branches), coreTris: tri(core), cardTris: tri(cards), lowTris: tri(lowF) + tri(lowB), waterTris: tri(water) },
+    stats: { trees: sq.trees.length + extraTrees, squareTrees: sq.trees.length, branchTris: tri(branches), coreTris: tri(core), cardTris: tri(cards), lowTris: tri(lowF) + tri(lowB), waterTris: tri(water) },
   };
 }
 

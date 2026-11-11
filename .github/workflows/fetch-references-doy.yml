@@ -1,0 +1,27 @@
+# Downloads openly licensed (Wikimedia Commons) reference photos of the Saatchi Gallery and Duke of
+# York Square into references/doy. Runs only on the 'references-doy' branch; never deployed.
+name: Fetch Duke of York Square reference photos
+on:
+  workflow_dispatch:
+  push:
+    branches: [references-doy]
+    paths: [scripts/refs/fetch-commons-doy.mjs, .github/workflows/fetch-references-doy.yml]
+permissions:
+  contents: write
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/refs/fetch-commons-doy.mjs references/doy
+      - name: Commit references
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add references
+          git diff --cached --quiet && echo "No change" && exit 0
+          git commit -m "Reference photos from Wikimedia Commons (see references/doy/index.json for authors and licences)"
+          git push
