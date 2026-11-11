@@ -2,6 +2,7 @@
 // Duke of York Square from Wikimedia Commons with author/licence/date metadata (modelling reference
 // only; never shipped in the app).
 // Usage: node scripts/refs/fetch-commons-doy.mjs [outDir]
+// (Run by .github/workflows/fetch-references-doy.yml on the references-doy branch.)
 import { writeFileSync, mkdirSync } from 'node:fs';
 const out = process.argv[2] || 'references/doy';
 mkdirSync(out, { recursive: true });

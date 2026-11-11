@@ -1,4 +1,5 @@
 // Fetches everything OpenStreetMap holds for a small local area (trees, paving, fountains, benches,
+// (Run by .github/workflows/import-doy.yml on the osm-doy branch for the --area doy extracts.)
 // barriers, planters, lamps; or, with --buildings, every building, part and shop node).
 // Usage: node scripts/osm/fetch-square.mjs [--area square|doy] [--buildings] [--out file.json]
 // Data © OpenStreetMap contributors, available under the Open Database License (ODbL 1.0).
