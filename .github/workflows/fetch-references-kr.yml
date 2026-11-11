@@ -1,0 +1,27 @@
+# Downloads openly licensed (Wikimedia Commons) reference photos of King's Road (Sloane Square to Markham Square)
+# into references/kr. Runs only on the 'references-kr' branch; never deployed.
+name: Fetch King's Road reference photos
+on:
+  workflow_dispatch:
+  push:
+    branches: [references-kr]
+    paths: [scripts/refs/fetch-commons-kr.mjs, .github/workflows/fetch-references-kr.yml]
+permissions:
+  contents: write
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/refs/fetch-commons-kr.mjs references/kr
+      - name: Commit references
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add references
+          git diff --cached --quiet && echo "No change" && exit 0
+          git commit -m "Reference photos from Wikimedia Commons (see references/kr/index.json for authors and licences)"
+          git push
