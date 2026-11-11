@@ -28,3 +28,4 @@ jobs:
           git diff --cached --quiet && echo "No change" && exit 0
           git commit -m "Import King's Road corridor OSM detail ($(date -u +%Y-%m-%d)) — © OpenStreetMap contributors, ODbL"
           git push
+# trigger 2026-11-11T21:15:37
