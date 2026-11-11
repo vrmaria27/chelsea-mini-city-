@@ -1,13 +1,18 @@
-// Fetches everything OpenStreetMap holds for the central space of Sloane Square (trees, paving,
-// fountain, benches, barriers, planters, lamps) from a small box around it.
-// Usage: node scripts/osm/fetch-square.mjs [--out data/osm/square-raw.json]
+// Fetches everything OpenStreetMap holds for a small local area (trees, paving, fountains, benches,
+// barriers, planters, lamps; or, with --buildings, every building, part and shop node).
+// Usage: node scripts/osm/fetch-square.mjs [--area square|doy] [--buildings] [--out file.json]
 // Data © OpenStreetMap contributors, available under the Open Database License (ODbL 1.0).
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 export const SQUARE_BBOX = { south: 51.4914, west: -0.1600, north: 51.4936, east: -0.1552 };
-const out = process.argv.includes('--out') ? process.argv[process.argv.indexOf('--out') + 1] : 'data/osm/square-raw.json';
-const { south, west, north, east } = SQUARE_BBOX;
+/** Duke of York Square, the Saatchi Gallery (Duke of York's HQ) and their lawns, to King's Road. */
+export const DOY_BBOX = { south: 51.4893, west: -0.1614, north: 51.4920, east: -0.1572 };
+const arg = (k) => (process.argv.includes(k) ? process.argv[process.argv.indexOf(k) + 1] : null);
+const area = arg('--area') ?? 'square';
+const BBOX = area === 'doy' ? DOY_BBOX : SQUARE_BBOX;
+const out = arg('--out') ?? 'data/osm/square-raw.json';
+const { south, west, north, east } = BBOX;
 // --buildings: every building, building part and shop/amenity node around the square, with full member
 // geometry for multipolygon relations (the main extract has none), for the perimeter reconstruction.
 const buildingsMode = process.argv.includes('--buildings');
@@ -44,6 +49,14 @@ const squareQuery = `[out:json][timeout:120][bbox:${south},${west},${north},${ea
   nwr["denotation"];
   nwr["species"];
   nwr["genus"];
+  nwr["shop"];
+  nwr["entrance"];
+  nwr["surface"];
+  nwr["footway"];
+  nwr["fountain"];
+  nwr["water"];
+  nwr["building"];
+  nwr["building:part"];
 );
 out geom tags meta;`;
 const query = buildingsMode ? buildingQuery : squareQuery;
@@ -69,7 +82,7 @@ for (const url of endpoints) {
       source: 'OpenStreetMap via Overpass API', endpoint: url,
       licence: 'ODbL 1.0 — © OpenStreetMap contributors — https://www.openstreetmap.org/copyright',
       retrieved: new Date().toISOString(), osm_base: data.osm3s?.timestamp_osm_base ?? null,
-      bbox: SQUARE_BBOX, query, elements: data.elements,
+      bbox: BBOX, area, query, elements: data.elements,
     }, null, 0));
     console.log(`Wrote ${data.elements.length} elements → ${out}`);
     process.exit(0);
