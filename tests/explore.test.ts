@@ -67,7 +67,7 @@ test('the static scene extrudes every non-custom footprint (no hidden footprints
   const src = readFileSync('src/map/osmMap.ts', 'utf8');
   assert.ok(!/hidden\.has|replaces/.test(src));
   const tris = osmMap.buildStatic().toFloat32().length / 27;
-  assert.ok(tris > 100_000 && tris < 330_000, `static triangles ${tris}`);
+  assert.ok(tris > 100_000 && tris < 400_000, `static triangles ${tris}`); // three rebuilt street corridors (see docs)
 });
 
 // ---- Walkable surfaces ---------------------------------------------------------------------------

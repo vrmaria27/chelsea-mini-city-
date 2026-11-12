@@ -21,3 +21,4 @@ Overpass JSON extract covering the box at `data/osm/raw.json` and run `npm run i
 - `kr-raw.json` and `kr-buildings.json`: the King's Road corridor, retrieved 2026-11-12 by *Import King's Road corridor OSM detail* on the `osm-kr` branch.
 
 The King's Road building extract replaces the main extract's footprints along the corridor, because it is newer: for example, it adds No. 138, Nos 114–116 and Whitelands House. All of them are © OpenStreetMap contributors, ODbL 1.0.
+- `ss-raw.json` and `ss-buildings.json`: Sloane Street and Lower Sloane Street, retrieved 2026-11-12 by *Import Sloane Street corridors OSM detail* on the `osm-ss` branch. Like King's Road, these replace the main extract's footprints along both streets.

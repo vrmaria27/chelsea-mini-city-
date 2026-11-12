@@ -8,7 +8,10 @@ import { F, K, chimney, edgesOf, latheAt, prismAt, toPts, turret, type Front, ty
 
 import { bays, facing, flatLid, fronts, longest, plainGrid, sign, slopedRoof, walls, type Ctx, type RoofInsets, type SignQuad, type SquareBuildingFootprint } from './buildingKit';
 import { DOY_BUILDERS } from './dukeOfYork';
-import { buildKr } from './kingsRoad';
+import { buildKr, withCorridorLine } from './kingsRoad';
+import { SS_SPECS } from './sloaneStreetSpecs';
+import { SS_HOOKS } from './sloaneStreetHooks';
+const CORRIDOR_HOOKS = { ...KR_HOOKS, ...SS_HOOKS };
 import { KR_SPECS } from './kingsRoadSpecs';
 import { KR_HOOKS } from './kingsRoadHooks';
 export type { RoofInsets, SignQuad, SquareBuildingFootprint } from './buildingKit';
@@ -722,14 +725,17 @@ export function buildSquareBuildings(b: MeshBuilder, buildings: SquareBuildingFo
   const built: string[] = [];
   const triangles: Record<string, number> = {};
   for (const bl of buildings) {
-    const krSpec = bl.custom?.startsWith('kr:') ? KR_SPECS[bl.custom.slice(3).replace(/-\d+$/, '')] : undefined;
-    const fn = bl.custom ? (krSpec ? (c: Ctx) => { buildKr(c, krSpec, KR_HOOKS); } : BUILDERS[bl.custom]) : undefined;
+    // street corridors: King's Road ('kr:'), Sloane Street ('ss:'), Lower Sloane Street ('ls:')
+    const cor = /^(kr|ss|ls):/.exec(bl.custom ?? '')?.[1];
+    const key = bl.custom?.slice(3).replace(/-\d+$/, '') ?? '';
+    const krSpec = cor === 'kr' ? KR_SPECS[key] : cor ? SS_SPECS[key] : undefined;
+    const fn = bl.custom ? (krSpec ? (c: Ctx) => { withCorridorLine(cor!, () => buildKr(c, krSpec, CORRIDOR_HOOKS)); } : BUILDERS[bl.custom]) : undefined;
     if (!fn) continue;
     const before = b.vertexCount;
     const others = all.filter((o) => o.id !== bl.id && near(o, bl)).map((o) => o.rings[0]);
     fn({ b, bl, roofs: roofs[bl.id] ?? {}, centre, signs, others });
-    const key = bl.custom!.startsWith('kr:') ? 'kr' : bl.custom!;
-    triangles[key] = (triangles[key] ?? 0) + (b.vertexCount - before) / 3;
+    const tkey = cor ?? bl.custom!;
+    triangles[tkey] = (triangles[tkey] ?? 0) + (b.vertexCount - before) / 3;
     built.push(bl.id);
   }
   return { signs, built, triangles };

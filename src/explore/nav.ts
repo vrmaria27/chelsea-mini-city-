@@ -40,20 +40,21 @@ export interface NavKr {
   roadW: number;
   /** Carriageway width at each centreline vertex. */
   w?: number[];
+  paveFrom?: number;
   trees: { x: number; z: number }[];
   lamps: { x: number; z: number }[];
   bollards: { x: number; z: number }[];
   postBoxes: { x: number; z: number }[];
   crossings: { x: number; z: number; kind: string | null }[];
 }
-export interface NavData { roads: NavRoad[]; areas: NavArea[]; buildings: NavBuilding[]; square: NavSquare; doy?: NavDoy | null; kr?: NavKr | null }
+export interface NavData { roads: NavRoad[]; areas: NavArea[]; buildings: NavBuilding[]; square: NavSquare; doy?: NavDoy | null; kr?: NavKr | null; corridors?: (NavKr & { id: string; name: string })[] }
 
 /** The Duke of York Square plaza areas (OSM ids) that are public paved space. */
 export const DOY_PLAZA_AREAS = ['w5318345', 'w900260769'];
 /** Zone margin around Duke of York Square's paved areas (takes in the King's Road pavement). */
 export const DOY_ZONE_M = 5;
 export const DOY_GROUND = 0.32;
-/** King's Road pavement height (matches KR_PAVE in kingsRoad.ts). */
+/** Corridor pavement height (King's Road, Sloane Street, Lower Sloane Street; matches KR_PAVE in kingsRoad.ts). */
 export const KR_GROUND = 0.5;
 /** Walkable band either side of King's Road beyond the carriageway edge (m). */
 export const KR_BAND = 9.5;
@@ -153,11 +154,9 @@ export class NavField {
   private doyGates: { x: number; z: number }[] = [];
   readonly doyBounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null = null;
   private obstacles: { x: number; z: number; r: number; kind: NavClass }[] = [];
-  private kr: { line: [number, number][]; cum: number[]; sStart: number; sEnd: number; hw: number; hwv: number[] } | null = null;
-  private krObstacles = new Buckets<{ x: number; z: number; r: number; kind: NavClass }>();
-  private krCrossings: { x: number; z: number; tx: number; tz: number }[] = [];
-  /** Axis-aligned bounds of the King's Road corridor zone. */
-  readonly krBounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null = null;
+  /** Street corridors rebuilt building by building: King's Road first, then Sloane Street and Lower Sloane Street. */
+  readonly corridors: CorridorNav[] = [];
+  private get kr(): CorridorNav | null { return this.corridors[0]?.id === 'kr' ? this.corridors[0] : null; }
 
   constructor(data: NavData) {
     this.square = data.square;
@@ -166,14 +165,16 @@ export class NavField {
     const pad = 40;
     // Duke of York Square's extent (for prefiltering geometry): its paved areas, before they are set up below
     const doyAreas = data.doy ? [...data.areas.filter((a) => DOY_PLAZA_AREAS.includes(a.id ?? '')).map((a) => a.ring), ...(data.doy.forecourt ? [data.doy.forecourt.ring] : [])].map(bounds) : [];
-    const krb = data.kr ? (() => { const xs = data.kr.line.filter((_, i) => i % 2 === 0), zs = data.kr.line.filter((_, i) => i % 2 === 1); return { minX: Math.min(...xs) - 30, maxX: Math.max(...xs) + 30, minZ: Math.min(...zs) - 30, maxZ: Math.max(...zs) + 30 }; })() : null;
-    const boxes = [this.zoneBounds, ...doyAreas, ...(krb ? [krb] : [])];
+    const corData = [...(data.kr ? [{ ...data.kr, id: 'kr', name: "King's Road" }] : []), ...(data.corridors ?? [])];
+    const corBoxes = corData.map((k) => { const xs = k.line.filter((_, i) => i % 2 === 0), zs = k.line.filter((_, i) => i % 2 === 1); return { minX: Math.min(...xs) - 30, maxX: Math.max(...xs) + 30, minZ: Math.min(...zs) - 30, maxZ: Math.max(...zs) + 30 }; });
+    const corNames = corData.map((k) => k.name);
+    const boxes = [this.zoneBounds, ...doyAreas, ...corBoxes];
     const near = (p: Poly) => boxes.some((zb) => p.maxX > zb.minX - pad && p.minX < zb.maxX + pad && p.maxZ > zb.minZ - pad && p.minZ < zb.maxZ + pad);
     for (const b of data.buildings) {
       const p = bounds(b.rings[0]);
       if (!near(p)) continue;
       // King's Road frontages project less (flush shopfronts, fascias ≤ 0.35 m) than the square's bays and porticos
-      const c = b.custom?.startsWith('kr:') ? KR_FACADE_CLEARANCE : FACADE_CLEARANCE;
+      const c = /^(kr|ss|ls):/.test(b.custom ?? '') ? KR_FACADE_CLEARANCE : FACADE_CLEARANCE;
       const item: Bldg = { ...p, id: b.id, h: b.h, holes: b.rings.slice(1), c };
       this.buildings.add(item, p.minX - c, p.maxX + c, p.minZ - c, p.maxZ + c);
     }
@@ -181,7 +182,7 @@ export class NavField {
       const target = r.cls === 'main' || r.cls === 'street' || r.cls === 'service' ? this.carriageways : this.footways;
       for (let i = 0; i + 3 < r.pts.length; i += 2) {
         const w = r.wv ? Math.max(r.wv[i / 2], r.wv[i / 2 + 1]) : r.w;
-        const s: Seg = { ax: r.pts[i], az: r.pts[i + 1], bx: r.pts[i + 2], bz: r.pts[i + 3], hw: w / 2, ref, main: r.cls === 'main', kr: r.name === "King's Road" };
+        const s: Seg = { ax: r.pts[i], az: r.pts[i + 1], bx: r.pts[i + 2], bz: r.pts[i + 3], hw: w / 2, ref, main: r.cls === 'main', kr: corNames.includes(r.name ?? '') };
         const m = s.hw + PAVEMENT_BAND;
         target.add(s, Math.min(s.ax, s.bx) - m, Math.max(s.ax, s.bx) + m, Math.min(s.az, s.bz) - m, Math.max(s.az, s.bz) + m);
       }
@@ -233,80 +234,42 @@ export class NavField {
         (this as { doyBounds: NavField['doyBounds'] }).doyBounds = { minX: Math.min(...xs) - DOY_ZONE_M, maxX: Math.max(...xs) + DOY_ZONE_M, minZ: Math.min(...zs) - DOY_ZONE_M, maxZ: Math.max(...zs) + DOY_ZONE_M };
       }
     }
-    const k = data.kr;
-    if (k) {
-      const line: [number, number][] = [];
-      for (let i = 0; i + 1 < k.line.length; i += 2) line.push([k.line[i], k.line[i + 1]]);
-      const cum = [0];
-      for (let i = 1; i < line.length; i++) cum.push(cum[i - 1] + Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]));
-      this.kr = { line, cum, sStart: k.sStart, sEnd: k.sEnd, hw: k.roadW / 2, hwv: line.map((_, i) => (k.w?.[i] ?? k.roadW) / 2) };
-      const add = (o: { x: number; z: number; r: number; kind: NavClass }) => this.krObstacles.add(o, o.x - o.r, o.x + o.r, o.z - o.r, o.z + o.r);
-      for (const t of k.trees) add({ x: t.x, z: t.z, r: TRUNK_R, kind: 'tree' });
-      for (const l of k.lamps) add({ x: l.x, z: l.z, r: 0.35, kind: 'feature' });
-      for (const b of k.bollards) add({ x: b.x, z: b.z, r: 0.3, kind: 'feature' });
-      for (const b of k.postBoxes) add({ x: b.x, z: b.z, r: 0.5, kind: 'feature' });
-      for (const c of k.crossings) { const q = this.krNear(c.x, c.z); this.krCrossings.push({ x: q.p[0], z: q.p[1], tx: q.t[0], tz: q.t[1] }); }
-      const pts = line.filter((_, i) => cum[i] >= k.sStart - 20 && cum[i] <= k.sEnd + 20);
-      const m = this.kr.hw + KR_BAND;
-      (this as { krBounds: NavField['krBounds'] }).krBounds = { minX: Math.min(...pts.map((p) => p[0])) - m, maxX: Math.max(...pts.map((p) => p[0])) + m, minZ: Math.min(...pts.map((p) => p[1])) - m, maxZ: Math.max(...pts.map((p) => p[1])) + m };
-    }
+    for (const k of corData) this.corridors.push(new CorridorNav(k));
   }
 
   /** Nearest point on the King's Road centreline: distance, chainage, point and direction. */
   krNear(x: number, z: number): { d: number; s: number; p: [number, number]; t: [number, number] } {
-    let best = { d: Infinity, s: 0, p: [0, 0] as [number, number], t: [1, 0] as [number, number] };
-    const k = this.kr;
-    if (!k) return best;
-    for (let i = 0; i + 1 < k.line.length; i++) {
-      const a = k.line[i], b = k.line[i + 1], dx = b[0] - a[0], dz = b[1] - a[1], L = k.cum[i + 1] - k.cum[i];
-      if (L < 1e-6) continue;
-      const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / (L * L)));
-      const p: [number, number] = [a[0] + dx * t, a[1] + dz * t], d = Math.hypot(x - p[0], z - p[1]);
-      if (d < best.d) best = { d, s: k.cum[i] + t * L, p, t: [dx / L, dz / L] };
-    }
-    return best;
+    return this.kr ? this.kr.near(x, z) : { d: Infinity, s: 0, p: [0, 0], t: [1, 0] };
   }
 
   /** Half-width of the King's Road carriageway at chainage s. */
   krHw(s: number): number {
-    const k = this.kr;
-    if (!k) return 0;
-    for (let i = 0; i + 1 < k.cum.length; i++) if (s <= k.cum[i + 1]) { const f = Math.max(0, (s - k.cum[i]) / ((k.cum[i + 1] - k.cum[i]) || 1)); return k.hwv[i] + (k.hwv[i + 1] - k.hwv[i]) * f; }
-    return k.hwv[k.hwv.length - 1];
+    return this.kr ? this.kr.hw(s) : 0;
   }
 
-  /** Inside the King's Road corridor zone (pavements both sides between its start and its end). */
+  /** The corridor zone containing a point (pavements both sides between its start and its end), if any. */
+  corridorAt(x: number, z: number): CorridorNav | null {
+    return this.corridors.find((c) => c.inZone(x, z)) ?? null;
+  }
+
+  /** Inside any corridor zone (King's Road, Sloane Street, Lower Sloane Street). */
   inKrZone(x: number, z: number): boolean {
-    const k = this.kr, b = this.krBounds;
-    if (!k || !b || x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) return false;
-    const q = this.krNear(x, z);
-    return q.d <= this.krHw(q.s) + KR_BAND && q.s >= k.sStart && q.s <= k.sEnd;
+    return this.corridorAt(x, z) !== null;
   }
 
-  /** Just beyond the end of the reconstruction (the King's Road corridor past the Markham Square junction). */
+  /** Just beyond the end of a corridor's reconstruction. */
   pastKrEnd(x: number, z: number): boolean {
-    const k = this.kr;
-    if (!k) return false;
-    const q = this.krNear(x, z);
-    return q.d <= this.krHw(q.s) + KR_BAND + 4 && q.s > k.sEnd && q.s < k.sEnd + 120;
+    return this.corridors.some((c) => c.pastEnd(x, z));
   }
 
-  /** Within KR_END_WARN of the end of the reconstruction (for the end-of-area message). */
+  /** Within KR_END_WARN of the end of a corridor's reconstruction (for the end-of-area message). */
   nearKrEnd(x: number, z: number): boolean {
-    const k = this.kr;
-    if (!k || !this.inKrZone(x, z)) return false;
-    return this.krNear(x, z).s > k.sEnd - KR_END_WARN;
+    return this.nearEndOf(x, z) !== null;
   }
 
-  private krClass(x: number, z: number): NavClass | null {
-    for (const o of this.krObstacles.at(x, z)) if (Math.hypot(x - o.x, z - o.z) < o.r) return o.kind;
-    const q = this.krNear(x, z);
-    const hw = this.krHw(q.s);
-    if (q.d < hw + 0.3) {
-      // the carriageway: only at a mapped crossing (a 3 m wide strip straight across the road)
-      const onCrossing = this.krCrossings.some((c) => { const dx = x - c.x, dz = z - c.z; return Math.abs(dx * c.tx + dz * c.tz) < 1.6 && Math.abs(-dx * c.tz + dz * c.tx) < hw + 0.5; });
-      return onCrossing ? 'ok' : 'carriageway';
-    }
+  /** The id of the corridor whose end is within KR_END_WARN (or null). */
+  nearEndOf(x: number, z: number): string | null {
+    for (const c of this.corridors) if (c.nearEnd(x, z) && !this.inSquare(x, z)) return c.id;
     return null;
   }
 
@@ -370,9 +333,10 @@ export class NavField {
     if (!Number.isFinite(x) || !Number.isFinite(z)) return 'outside';
     if (!this.inZone(x, z)) return this.pastKrEnd(x, z) ? 'end' : 'outside';
     if (this.buildingAt(x, z) || this.nearFacade(x, z)) return 'building';
-    const inKr = this.kr !== null && this.inKrZone(x, z) && !this.inSquare(x, z) && !(this.doyRings.length && this.inDoy(x, z));
+    const cor = this.corridorAt(x, z);
+    const inKr = cor !== null && !this.inSquare(x, z) && !(this.doyRings.length && this.inDoy(x, z));
     if (inKr) {
-      const c = this.krClass(x, z);
+      const c = cor.classify(x, z);
       if (c) return c;
     }
     if (this.doyRings.length && this.inDoyZone(x, z)) {
@@ -413,7 +377,8 @@ export class NavField {
   groundY(x: number, z: number): number {
     if (this.inSquare(x, z)) return SQUARE_GROUND;
     if (this.doyRings.length && this.inDoy(x, z)) return DOY_GROUND;
-    return this.kr && this.inKrZone(x, z) ? KR_GROUND : STREET_GROUND;
+    const c = this.corridorAt(x, z);
+    return c ? c.groundY(x, z) : STREET_GROUND;
   }
 
   /**
@@ -442,6 +407,91 @@ export class NavField {
         const px = x + Math.cos(a) * r, pz = z + Math.sin(a) * r;
         if (this.isWalkable(px, pz)) return { x: px, z: pz };
       }
+    }
+    return null;
+  }
+}
+
+/** One street corridor's walkable zone: its pavements, obstacles, mapped crossings and end. */
+export class CorridorNav {
+  readonly id: string;
+  readonly name: string;
+  readonly sStart: number;
+  readonly sEnd: number;
+  /** Chainage where the raised pavement begins (ramping up from the street level over 3 m). */
+  readonly paveFrom: number;
+  private line: [number, number][] = [];
+  private cum = [0];
+  private hwv: number[];
+  private obstacles = new Buckets<{ x: number; z: number; r: number; kind: NavClass }>();
+  private crossings: { x: number; z: number; tx: number; tz: number }[] = [];
+  readonly bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
+
+  constructor(k: NavKr & { id: string; name: string }) {
+    this.id = k.id; this.name = k.name; this.sStart = k.sStart; this.sEnd = k.sEnd; this.paveFrom = k.paveFrom ?? -Infinity;
+    for (let i = 0; i + 1 < k.line.length; i += 2) this.line.push([k.line[i], k.line[i + 1]]);
+    for (let i = 1; i < this.line.length; i++) this.cum.push(this.cum[i - 1] + Math.hypot(this.line[i][0] - this.line[i - 1][0], this.line[i][1] - this.line[i - 1][1]));
+    this.hwv = this.line.map((_, i) => (k.w?.[i] ?? k.roadW) / 2);
+    const add = (o: { x: number; z: number; r: number; kind: NavClass }) => this.obstacles.add(o, o.x - o.r, o.x + o.r, o.z - o.r, o.z + o.r);
+    for (const t of k.trees) add({ x: t.x, z: t.z, r: TRUNK_R, kind: 'tree' });
+    for (const l of k.lamps) add({ x: l.x, z: l.z, r: 0.35, kind: 'feature' });
+    for (const b of k.bollards) add({ x: b.x, z: b.z, r: 0.3, kind: 'feature' });
+    for (const b of k.postBoxes) add({ x: b.x, z: b.z, r: 0.5, kind: 'feature' });
+    for (const c of k.crossings) { const q = this.near(c.x, c.z); this.crossings.push({ x: q.p[0], z: q.p[1], tx: q.t[0], tz: q.t[1] }); }
+    const pts = this.line.filter((_, i) => this.cum[i] >= k.sStart - 20 && this.cum[i] <= k.sEnd + 20);
+    const m = Math.max(...this.hwv) + KR_BAND;
+    this.bounds = { minX: Math.min(...pts.map((p) => p[0])) - m, maxX: Math.max(...pts.map((p) => p[0])) + m, minZ: Math.min(...pts.map((p) => p[1])) - m, maxZ: Math.max(...pts.map((p) => p[1])) + m };
+  }
+
+  /** Nearest point on the centreline: distance, chainage, point and direction. */
+  near(x: number, z: number): { d: number; s: number; p: [number, number]; t: [number, number] } {
+    let best = { d: Infinity, s: 0, p: [0, 0] as [number, number], t: [1, 0] as [number, number] };
+    for (let i = 0; i + 1 < this.line.length; i++) {
+      const a = this.line[i], b = this.line[i + 1], dx = b[0] - a[0], dz = b[1] - a[1], L = this.cum[i + 1] - this.cum[i];
+      if (L < 1e-6) continue;
+      const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / (L * L)));
+      const p: [number, number] = [a[0] + dx * t, a[1] + dz * t], d = Math.hypot(x - p[0], z - p[1]);
+      if (d < best.d) best = { d, s: this.cum[i] + t * L, p, t: [dx / L, dz / L] };
+    }
+    return best;
+  }
+
+  /** Carriageway half-width at chainage s. */
+  hw(s: number): number {
+    for (let i = 0; i + 1 < this.cum.length; i++) if (s <= this.cum[i + 1]) { const f = Math.max(0, (s - this.cum[i]) / ((this.cum[i + 1] - this.cum[i]) || 1)); return this.hwv[i] + (this.hwv[i + 1] - this.hwv[i]) * f; }
+    return this.hwv[this.hwv.length - 1];
+  }
+
+  inZone(x: number, z: number): boolean {
+    const b = this.bounds;
+    if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) return false;
+    const q = this.near(x, z);
+    return q.d <= this.hw(q.s) + KR_BAND && q.s >= this.sStart && q.s <= this.sEnd;
+  }
+
+  /** Walking-surface height at a point in the zone. */
+  groundY(x: number, z: number): number {
+    const s = this.near(x, z).s;
+    return KR_GROUND - (KR_GROUND - STREET_GROUND) * Math.max(0, Math.min(1, 1 - (s - this.paveFrom) / 3));
+  }
+
+  pastEnd(x: number, z: number): boolean {
+    const q = this.near(x, z);
+    return q.d <= this.hw(q.s) + KR_BAND + 4 && q.s > this.sEnd && q.s < this.sEnd + 120;
+  }
+
+  nearEnd(x: number, z: number): boolean {
+    return this.inZone(x, z) && this.near(x, z).s > this.sEnd - KR_END_WARN;
+  }
+
+  /** Obstacles and the carriageway (walkable only at a mapped crossing: a 3 m strip straight across). */
+  classify(x: number, z: number): NavClass | null {
+    for (const o of this.obstacles.at(x, z)) if (Math.hypot(x - o.x, z - o.z) < o.r) return o.kind;
+    const q = this.near(x, z);
+    const hw = this.hw(q.s);
+    if (q.d < hw + 0.3) {
+      const onCrossing = this.crossings.some((c) => { const dx = x - c.x, dz = z - c.z; return Math.abs(dx * c.tx + dz * c.tz) < 1.6 && Math.abs(-dx * c.tz + dz * c.tx) < hw + 0.5; });
+      return onCrossing ? 'ok' : 'carriageway';
     }
     return null;
   }

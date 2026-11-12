@@ -25,7 +25,7 @@ export interface PanelState {
 
 interface Btn { action: Action; label: string; x: number; y: number; w: number; h: number; on?: boolean; primary?: boolean; small?: boolean }
 
-const W = 1024, H = 1050;
+const W = 1024, H = 1150;
 const C = { bg: '#faf6ee', line: '#e0d4bf', ink: '#2e2a26', soft: '#7a6f63', green: '#2f5a45', hover: '#f3e3c3', warn: '#a33b32', gold: '#c99a4a' };
 
 export class ExplorePanel {

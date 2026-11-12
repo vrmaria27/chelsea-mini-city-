@@ -49,6 +49,13 @@ export const M = {
   paveJoint: hex('#b1ab9f'),
   green: hex('#2f5b4a'),
   tileGreen: hex('#3f7a5d'),
+  // Sloane Street / Lower Sloane Street
+  terracotta: hex('#b77158'),
+  rubbed: hex('#b5563a'),
+  buffModern: hex('#c8b289'),
+  navy: hex('#1f2a44'),
+  marbleDark: hex('#3b4140'),
+  stoneGrey: hex('#c9c4b8'),
 };
 export type MatKey = keyof typeof M;
 
@@ -83,7 +90,7 @@ export interface Win {
 export interface Ground {
   /** shops: timber/metal shopfronts between pilasters; pub: Victorian pub front; glass: modern full-height
    *  glazing; arcade: arched openings; stone: stone-clad base with large openings. */
-  kind: 'shops' | 'pub' | 'glass' | 'arcade' | 'stone' | 'podium';
+  kind: 'shops' | 'pub' | 'glass' | 'arcade' | 'stone' | 'podium' | 'residential';
   /** Shop units across the frontage (each with a fascia and entrance). */
   units?: number;
   fascia?: MatKey;
@@ -109,7 +116,10 @@ export interface Ground {
 export interface KrSpec {
   /** Verified address (King's Road unless stated), shown in the coverage table. */
   addr: string;
-  side: 'N' | 'S';
+  /** Side of the street (King's Road: N/S; Sloane Street and Lower Sloane Street: E/W). */
+  side: 'N' | 'S' | 'E' | 'W';
+  /** Furthest a front may be from the street centreline (m, default 26): rear elevations across gardens. */
+  frontD?: number;
   name?: string;
   /** Storey heights from the ground floor up (m). */
   floors: number[];
@@ -151,10 +161,23 @@ export interface KrSpec {
 // ---- King's Road geometry --------------------------------------------------------------------------
 
 let LINE: Pt[] = [];
+const LINES: Record<string, Pt[]> = {};
+/** Registers a corridor centreline (map metres) used to find each building's frontage ('kr' is the default). */
+export function useCorridorLine(id: string, line: number[]): void {
+  const pts: Pt[] = [];
+  for (let i = 0; i + 1 < line.length; i += 2) pts.push([line[i], line[i + 1]]);
+  LINES[id] = pts;
+  if (id === 'kr') LINE = pts;
+}
 /** Sets the King's Road centreline used to find each building's frontage (map metres). */
 export function useKingsRoadLine(line: number[]): void {
-  LINE = [];
-  for (let i = 0; i + 1 < line.length; i += 2) LINE.push([line[i], line[i + 1]]);
+  useCorridorLine('kr', line);
+}
+/** Runs fn with another corridor's centreline as the frontage reference. */
+export function withCorridorLine<T>(id: string, fn: () => T): T {
+  const prev = LINE;
+  LINE = LINES[id] ?? LINE;
+  try { return fn(); } finally { LINE = prev; }
 }
 
 /** Nearest point on the centreline: distance, chainage and the point. */
@@ -282,7 +305,7 @@ function shopUnit(fr: F, u0: number, u1: number, y0: number, y1: number, g: Grou
 export interface KrBuilt { fronts: Front[]; returns: Front[]; eaves: number; top: number }
 
 /** Footprint edges facing King's Road (merged) and short corner returns facing side streets. */
-export function krFronts(c: Ctx): { kr: Front[]; ret: Front[] } {
+export function krFronts(c: Ctx, maxD = 26): { kr: Front[]; ret: Front[] } {
   const all = edgesOf(c.bl.rings[0]).filter((f) => !partyWall(c, f));
   const kr: Front[] = [], other: Front[] = [];
   for (const f of all) {
@@ -290,10 +313,10 @@ export function krFronts(c: Ctx): { kr: Front[]; ret: Front[] } {
     const q = krNearest(m[0], m[1]);
     const to: Pt = [(q.p[0] - m[0]) / (q.d || 1), (q.p[1] - m[1]) / (q.d || 1)];
     const dot = f.n[0] * to[0] + f.n[1] * to[1];
-    if (q.d < 26 && dot > 0.6 && f.len > 0.8) kr.push(f);
+    if (q.d < maxD && dot > 0.6 && f.len > 0.8) kr.push(f);
     else other.push(f);
   }
-  const krM = mergeFronts(kr, 0.2);
+  const krM = mergeFronts(kr, 0.2, 0.3);
   // returns: exposed edges that meet a King's Road front at a corner (within 1.5 m of its end)
   const ends = krM.flatMap((f) => [f.a, f.b]);
   const ret = other.filter((f) => {
@@ -339,7 +362,7 @@ export function buildKr(c: Ctx, spec: KrSpec, hooks: Record<string, KrHook>): Kr
   for (const h of spec.floors) ys.push(ys[ys.length - 1] + h);
   const eaves = ys[ys.length - 1];
   const wall = M[spec.wall], base = M[spec.base ?? spec.wall];
-  const { kr, ret } = krFronts(c);
+  const { kr, ret } = krFronts(c, spec.frontD);
   const topH = spec.top.h ?? (spec.top.kind === 'parapet' ? 0.9 : spec.top.kind === 'blocking' ? 0.7 : spec.top.kind === 'cornice' ? 0.55 : 0);
   const top = eaves + topH;
   // body: the King's Road fronts leave the ground floor to the shopfront assembly (recessed entrances)
@@ -363,7 +386,8 @@ export function buildKr(c: Ctx, spec: KrSpec, hooks: Record<string, KrHook>): Kr
     groundFloor(fr, u0, u1, ys[0], ys[1], spec, isRet, base, units);
     // upper floors
     const edge = spec.edge ?? 0.9;
-    const nb = isRet ? (spec.returnBays ?? Math.max(1, Math.floor((L - 1.2) / 3.4))) : fr.f === main ? spec.bays : Math.max(1, Math.round((spec.bays * fr.len) / totalLen));
+    // the main front carries the specified bays; a front broken into several faces (a curve) shares them by length
+    const nb = isRet ? (spec.returnBays ?? Math.max(1, Math.floor((L - 1.2) / 3.4))) : fr.f === main && main.len >= totalLen * 0.8 ? spec.bays : Math.max(1, Math.round((spec.bays * fr.len) / totalLen));
     const span = u1 - u0 - edge * 2;
     const centres = Array.from({ length: nb }, (_, i) => u0 + edge + ((i + 0.5) * span) / nb);
     for (let s = 1; s < spec.floors.length; s++) {
@@ -505,6 +529,24 @@ function groundFloor(fr: F, u0: number, u1: number, y0: number, y1: number, spec
     }
   } else if (g.kind === 'podium') {
     fr.wall(u0, u1, y0, y1, pil);
+  } else if (g.kind === 'residential') {
+    // houses and mansion blocks: sash windows per bay and an entrance (stone surround, steps) in the middle
+    fr.wall(u0, u1, y0, y1, base);
+    fr.box(u0, u1, y0, y0 + 0.45, 0, 0.06, shade(base, 0.85), false, false);
+    const n = Math.max(1, Math.round((u1 - u0) / 3.4)), w = (u1 - u0) / n, door = isRet ? -1 : Math.floor(n / 2);
+    for (let i = 0; i < n; i++) {
+      const uc = u0 + (i + 0.5) * w;
+      if (i === door) {
+        const dw = Math.min(1.3, w * 0.45), dh = Math.min(2.7, y1 - y0 - 0.5);
+        fr.box(uc - dw / 2 - 0.3, uc + dw / 2 + 0.3, y0, y0 + dh + 0.35, 0, 0.12, M.portland, false, true);
+        fr.wall(uc - dw / 2, uc + dw / 2, y0 + 0.3, y0 + dh, M.frameDark, 0.02);
+        fr.wall(uc - dw / 2, uc + dw / 2, y0 + dh - 0.55, y0 + dh, M.glass, 0.03);
+        for (let k = 0; k < 2; k++) fr.box(uc - dw / 2 - 0.2, uc + dw / 2 + 0.2, y0 + k * 0.15, y0 + (k + 1) * 0.15, 0, 0.25 + (2 - k) * 0.28, M.stone, true, false);
+      } else {
+        const ww = Math.min(1.05, w * 0.4);
+        sash(fr, uc, y0 + 0.9, ww, (y1 - y0) * 0.5, { surround: 'stone', bars: 1 }, base);
+      }
+    }
   }
 }
 
@@ -519,6 +561,11 @@ export interface KrData {
   /** Carriageway width (default) and per centreline vertex (fitted between the building lines). */
   roadW: number;
   w?: number[];
+  /** Corridor id and street name (King's Road when absent). */
+  id?: string;
+  name?: string;
+  /** Chainage where the raised corridor pavement begins (it ramps up from the square's pavement level). */
+  paveFrom?: number;
   /** Chainage where the corridor starts (it overlaps the Sloane Square zone). */
   sStart: number;
   trees: { x: number; z: number; osm: string; genus: string | null }[];
@@ -539,7 +586,8 @@ export function buildKrStreet(b: MeshBuilder, d: KrData, roads: { pts: number[];
   const before = b.vertexCount;
   const line: Pt[] = [];
   for (let i = 0; i + 1 < d.line.length; i += 2) line.push([d.line[i], d.line[i + 1]]);
-  const sideRoads = roads.filter((r) => r.name !== "King's Road" && (r.cls === 'street' || r.cls === 'service' || r.cls === 'main'));
+  const own = d.name ?? "King's Road";
+  const sideRoads = roads.filter((r) => r.name !== own && (r.cls === 'street' || r.cls === 'service' || r.cls === 'main'));
   const inSide = (x: number, z: number) => sideRoads.some((r) => { for (let i = 0; i + 3 < r.pts.length; i += 2) if (segD(x, z, r.pts[i], r.pts[i + 1], r.pts[i + 2], r.pts[i + 3]) < r.w / 2 + 0.2) return true; return false; });
   const excluded = (x: number, z: number) => d.excl.some((r) => inRingFlat(x, z, r));
   const W = 11; // pavement band (m beyond the kerb); building footprints hide the part inside them
@@ -555,7 +603,7 @@ export function buildKrStreet(b: MeshBuilder, d: KrData, roads: { pts: number[];
     segs.push({ a, t, n: [-t[1], t[0]], s0: acc, L, ha: (d.w?.[i] ?? d.roadW) / 2, hb: (d.w?.[i + 1] ?? d.roadW) / 2 });
     acc += L;
   }
-  const y = KR_PAVE;
+  let y = KR_PAVE;
   const kerbW = 0.3;
   const CELL = 1.4; // flag courses across the pavement; joints every 0.9 m along it
   const nCells = Math.ceil((W - kerbW) / CELL);
@@ -567,6 +615,9 @@ export function buildKrStreet(b: MeshBuilder, d: KrData, roads: { pts: number[];
       const t0 = (sg.L * k) / n, t1 = (sg.L * (k + 1)) / n;
       const s = sg.s0 + (t0 + t1) / 2;
       if (s < d.sStart || s > d.sEnd + 25) continue;
+      // near Sloane Square the raised pavement begins after the square's own models, ramping up over 3 m
+      // (before it, flags at the square's street level so no bare ground shows)
+      if (d.paveFrom != null) y = KR_PAVE - (KR_PAVE - 0.22) * Math.max(0, Math.min(1, 1 - (s - d.paveFrom) / 3));
       for (const side of [1, -1]) {
         // o is measured from the kerb line, which follows the fitted carriageway width
         const P = (t: number, o: number): number[] => { const oo = o + sg.ha + ((sg.hb - sg.ha) * t) / sg.L; return [sg.a[0] + sg.t[0] * t + sg.n[0] * oo * side, y, sg.a[1] + sg.t[1] * t + sg.n[1] * oo * side]; };
@@ -575,7 +626,7 @@ export function buildKrStreet(b: MeshBuilder, d: KrData, roads: { pts: number[];
         // granite kerb with its face down to the carriageway
         if (ok(0, kerbW)) {
           q(P(t0, 0), P(t1, 0), P(t1, kerbW), P(t0, kerbW), M.kerb);
-          const A0 = P(t0, 0), B0 = P(t1, 0); A0[1] = B0[1] = 0.36;
+          const A0 = P(t0, 0), B0 = P(t1, 0); A0[1] = B0[1] = Math.min(0.36, y - 0.06);
           if (side > 0) b.quad(B0, A0, P(t0, 0), P(t1, 0), shade(M.kerb, 0.8)); else b.quad(A0, B0, P(t1, 0), P(t0, 0), shade(M.kerb, 0.8));
         }
         // flag courses: runs of consecutive cells that are pavement

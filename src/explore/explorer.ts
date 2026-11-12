@@ -15,11 +15,11 @@ export type LandmarkResult =
   | { kind: 'highlight' } // show it on the miniature (outside the street-level area)
   | { kind: 'none' };
 
-/** Why a point past the Markham Square junction is refused. */
-export const END_REASON = 'End of the current area: the reconstruction stops at the Markham Square junction.';
+/** Why a point past the end of a reconstructed street is refused. */
+export const END_REASON = 'End of the current area: the reconstruction stops here.';
 
 const REASONS: Record<Exclude<NavClass, 'ok'>, string> = {
-  outside: 'Street level is limited to Sloane Square, Duke of York Square and King\'s Road as far as Markham Square.',
+  outside: 'Street level is limited to Sloane Square, Duke of York Square, King\'s Road as far as Markham Square, Sloane Street and Lower Sloane Street.',
   end: END_REASON,
   building: 'That is inside a building. Choose the pavement or the square.',
   carriageway: 'That is the road. Choose the pavement or the square.',
@@ -32,6 +32,13 @@ const REASONS: Record<Exclude<NavClass, 'ok'>, string> = {
 
 /** The end-of-area message (King's Road at Markham Square). */
 export const END_TEXT = 'End of current area. The reconstruction stops at the Markham Square junction; the buildings beyond are plain massing. Return to the miniature or go back.';
+/** End-of-area messages by corridor. */
+export const END_TEXTS: Record<string, string> = {
+  kr: END_TEXT,
+  ss: 'End of current area. Sloane Street is reconstructed as far as Cadogan Gardens and Ellis Street, near the edge of the map; the buildings beyond are plain massing. Return to the miniature or go back.',
+  ls: 'End of current area. Lower Sloane Street ends here at the junction with Pimlico Road, Chelsea Bridge Road and Royal Hospital Road, which are not reconstructed. Return to the miniature or go back.',
+};
+const isEndText = (t: string | undefined) => !!t && Object.values(END_TEXTS).includes(t);
 
 export const ROT_STEP = Math.PI / 12; // 15° miniature rotation step
 export const MAX_TELEPORT = 40; // metres per teleport (VR comfort; desktop clicks too)
@@ -48,6 +55,8 @@ export class Explorer {
   readonly loadStatus: LoadResult['status'];
   /** True while standing near the end of the King's Road reconstruction (shows the end-of-area message). */
   atEnd = false;
+  /** Which corridor's end is near (null when none). */
+  private endId: string | null = null;
   /** The last place chosen from the places list (offered as a way back from the end of the area). */
   lastPlace: Landmark | null = null;
   /** Increments on every change, for cheap redraw checks. */
@@ -75,10 +84,13 @@ export class Explorer {
   }
 
   private updateEnd(): void {
-    const was = this.atEnd;
-    this.atEnd = this.mode === 'street' && this.nav.nearKrEnd(this.street.x, this.street.z);
-    if (this.atEnd && !was && !this.notice) this.notice = { text: END_TEXT, kind: 'info' };
-    if (!this.atEnd && was && this.notice?.text === END_TEXT) this.notice = null;
+    const was = this.endId;
+    const id = this.mode === 'street' ? this.nav.nearEndOf(this.street.x, this.street.z) : null;
+    this.endId = id;
+    this.atEnd = id !== null;
+    // a new end (or a different corridor's end) shows its message unless another notice is up
+    if (id !== null && id !== was && (!this.notice || isEndText(this.notice.text))) this.notice = { text: END_TEXTS[id] ?? END_TEXT, kind: 'info' };
+    if (id === null && was !== null && isEndText(this.notice?.text)) this.notice = null;
   }
 
   /** Where "Return" takes you from the end of the area: the last chosen place, else Sloane Square. */
@@ -204,9 +216,9 @@ export class Explorer {
       if (this.nav.isWalkable(nx, nz) && this.nav.isWalkable(nx + Math.sign(ax) * 0.3, nz + Math.sign(az) * 0.3)) {
         this.street = { ...this.street, x: nx, z: nz };
         this.prefs.viewpoint = { ...this.street };
-        const was = this.atEnd;
+        const was = this.endId;
         this.updateEnd();
-        if (was !== this.atEnd) for (const f of this.listeners) f();
+        if (was !== this.endId) for (const f of this.listeners) f();
         this.version++;
         return true;
       }
