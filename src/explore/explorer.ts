@@ -15,8 +15,12 @@ export type LandmarkResult =
   | { kind: 'highlight' } // show it on the miniature (outside the street-level area)
   | { kind: 'none' };
 
+/** Why a point past the Markham Square junction is refused. */
+export const END_REASON = 'End of the current area: the reconstruction stops at the Markham Square junction.';
+
 const REASONS: Record<Exclude<NavClass, 'ok'>, string> = {
-  outside: 'Street level is limited to the areas around Sloane Square and Duke of York Square.',
+  outside: 'Street level is limited to Sloane Square, Duke of York Square and King\'s Road as far as Markham Square.',
+  end: END_REASON,
   building: 'That is inside a building. Choose the pavement or the square.',
   carriageway: 'That is the road. Choose the pavement or the square.',
   water: 'That is the fountain basin.',
@@ -25,6 +29,9 @@ const REASONS: Record<Exclude<NavClass, 'ok'>, string> = {
   garden: 'Gardens are not part of the walkable area.',
   'not-public': 'That is not public pavement.',
 };
+
+/** The end-of-area message (King's Road at Markham Square). */
+export const END_TEXT = 'End of current area. The reconstruction stops at the Markham Square junction; the buildings beyond are plain massing. Return to the miniature or go back.';
 
 export const ROT_STEP = Math.PI / 12; // 15° miniature rotation step
 export const MAX_TELEPORT = 40; // metres per teleport (VR comfort; desktop clicks too)
@@ -39,6 +46,10 @@ export class Explorer {
   notice: Notice | null = null;
   readonly prefs: ExplorerPrefs;
   readonly loadStatus: LoadResult['status'];
+  /** True while standing near the end of the King's Road reconstruction (shows the end-of-area message). */
+  atEnd = false;
+  /** The last place chosen from the places list (offered as a way back from the end of the area). */
+  lastPlace: Landmark | null = null;
   /** Increments on every change, for cheap redraw checks. */
   version = 0;
   private listeners: (() => void)[] = [];
@@ -57,9 +68,32 @@ export class Explorer {
   }
 
   private changed(save = false): void {
+    this.updateEnd();
     this.version++;
     if (save) savePrefs(this.store, this.prefs);
     for (const f of this.listeners) f();
+  }
+
+  private updateEnd(): void {
+    const was = this.atEnd;
+    this.atEnd = this.mode === 'street' && this.nav.nearKrEnd(this.street.x, this.street.z);
+    if (this.atEnd && !was && !this.notice) this.notice = { text: END_TEXT, kind: 'info' };
+    if (!this.atEnd && was && this.notice?.text === END_TEXT) this.notice = null;
+  }
+
+  /** Where "Return" takes you from the end of the area: the last chosen place, else Sloane Square. */
+  get returnPlace(): Landmark {
+    return this.lastPlace?.street ? this.lastPlace : DEFAULT_LANDMARK;
+  }
+
+  /** Leaves the end of the area for the last chosen place (or Sloane Square). */
+  returnFromEnd(): void {
+    const l = this.returnPlace;
+    if (!l.street) return;
+    this.street = { ...l.street };
+    this.prefs.viewpoint = { ...l.street };
+    this.notice = null;
+    this.changed(true);
   }
 
   say(text: string, kind: Notice['kind'] = 'info'): void {
@@ -170,6 +204,9 @@ export class Explorer {
       if (this.nav.isWalkable(nx, nz) && this.nav.isWalkable(nx + Math.sign(ax) * 0.3, nz + Math.sign(az) * 0.3)) {
         this.street = { ...this.street, x: nx, z: nz };
         this.prefs.viewpoint = { ...this.street };
+        const was = this.atEnd;
+        this.updateEnd();
+        if (was !== this.atEnd) for (const f of this.listeners) f();
         this.version++;
         return true;
       }
@@ -188,6 +225,7 @@ export class Explorer {
     const l = landmarkById(id);
     if (!l) return { kind: 'none' };
     this.selected = l;
+    if (l.street) this.lastPlace = l;
     if (l.street && this.mode === 'street') {
       this.street = { ...l.street };
       this.prefs.viewpoint = { ...l.street };

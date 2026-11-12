@@ -197,6 +197,74 @@ const CUSTOM_LANDMARKS = {
 };
 // Other footprints that belong to a protected landmark (Historic England lists 25 Cadogan Gardens as part of Peter Jones).
 const PROTECTED_WAYS = new Set([28682626, 1186000571, 12224305, 12224306]); // + listed Wyndham/Wellesley House (relations)
+// ---- King's Road corridor: Sloane Square to the Markham Square junction ------------------------------
+// Centreline from the main extract (the primary-road ways named King's Road, east to west). Chainage 0
+// is the Sloane Square end; the reconstruction ends at KR_END_S, just west of the Markham Square
+// junction's west corner building (see docs/kings-road.md). Street detail comes from a focused extract
+// (scripts/osm/fetch-square.mjs --area kr → data/osm/kr-raw.json) when available.
+const KR_FILE = 'data/osm/kr-raw.json';
+const krLine = (() => {
+  const parts = ways.filter((w) => w.tags?.name === "King's Road" && w.tags.highway === 'primary').map((w) => w.geometry.map(P));
+  const same = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.05;
+  // start from the most easterly end (Sloane Square) and chain westward
+  let start = parts.flatMap((p) => [p[0], p[p.length - 1]]).reduce((m, q) => (q[0] - q[1] * 0.0 > m[0] ? q : m));
+  const pool = parts.slice(); const line = [start];
+  for (let grow = true; grow;) {
+    grow = false;
+    const end = line[line.length - 1];
+    const k = pool.findIndex((w) => same(w[0], end) || same(w[w.length - 1], end));
+    if (k >= 0) { let w = pool.splice(k, 1)[0]; if (!same(w[0], end)) w = w.slice().reverse(); line.push(...w.slice(1)); grow = true; }
+  }
+  // keep the stretch inside the map, east of x = -450
+  return line.filter((q) => q[0] > -450);
+})();
+const krCum = [0];
+for (let i = 1; i < krLine.length; i++) krCum.push(krCum[i - 1] + Math.hypot(krLine[i][0] - krLine[i - 1][0], krLine[i][1] - krLine[i - 1][1]));
+function krNear(x, z) {
+  let best = { d: Infinity, s: 0, p: [0, 0], t: [1, 0] };
+  for (let i = 0; i + 1 < krLine.length; i++) {
+    const a = krLine[i], b = krLine[i + 1], dx = b[0] - a[0], dz = b[1] - a[1], L = Math.hypot(dx, dz);
+    if (L < 1e-6) continue;
+    const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / (L * L)));
+    const p = [a[0] + dx * t, a[1] + dz * t], d = Math.hypot(x - p[0], z - p[1]);
+    if (d < best.d) best = { d, s: krCum[i] + t * L, p, t: [dx / L, dz / L] };
+  }
+  return best;
+}
+const krAt = (s) => { for (let i = 0; i + 1 < krLine.length; i++) if (s <= krCum[i + 1] || i === krLine.length - 2) { const L = krCum[i + 1] - krCum[i] || 1, t = (s - krCum[i]) / L; const a = krLine[i], b = krLine[i + 1]; return { p: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], t: [(b[0] - a[0]) / L, (b[1] - a[1]) / L] }; } };
+/** End of the reconstruction (chainage, m): the far side of the Markham Square junction's west corner. */
+const KR_END_S = 562;
+/** Start of the corridor zone: it overlaps the Sloane Square zone. */
+const KR_START_S = 0;
+// Building footprints from the focused extract replace the main extract's along the corridor (newer data:
+// e.g. 120 King's Road, completed 2023, replaced the Kings Walk mall). Completed landmark models keep theirs.
+const KR_BUILDINGS_FILE = 'data/osm/kr-buildings.json';
+const krReplaced = { removed: [], added: [] };
+try {
+  const kb = JSON.parse(readFileSync(KR_BUILDINGS_FILE, 'utf8'));
+  const inCorr = (e) => {
+    const g = e.geometry ?? e.members?.filter((m) => m.role === 'outer').flatMap((m) => m.geometry ?? []) ?? [];
+    if (!g.length) return false;
+    const pts = g.map(P);
+    const c = pts.reduce((s, q) => [s[0] + q[0] / pts.length, s[1] + q[1] / pts.length], [0, 0]);
+    const q = krNear(c[0], c[1]);
+    const dmin = Math.min(...pts.map((p) => krNear(p[0], p[1]).d));
+    return dmin < 16 && q.s > 30 && q.s < KR_END_S + 25;
+  };
+  const isB = (e) => (e.type === 'way' || e.type === 'relation') && (e.tags?.building || e.tags?.['building:part']);
+  const keep = (e) => !!CUSTOM_LANDMARKS[`${e.type[0]}${e.id}`];
+  for (let i = ways.length - 1; i >= 0; i--) if (isB(ways[i]) && !keep(ways[i]) && inCorr(ways[i])) krReplaced.removed.push(`w${ways.splice(i, 1)[0].id}`);
+  for (let i = rels.length - 1; i >= 0; i--) if (isB(rels[i]) && !keep(rels[i]) && inCorr(rels[i])) krReplaced.removed.push(`r${rels.splice(i, 1)[0].id}`);
+  for (const e of kb.elements) {
+    if (!isB(e) || keep(e) || !inCorr(e)) continue;
+    if (e.type === 'way' && e.geometry) { ways.push(e); krReplaced.added.push(`w${e.id}`); }
+    if (e.type === 'relation' && e.members?.some((m) => m.geometry)) { rels.push(e); krReplaced.added.push(`r${e.id}`); }
+  }
+  krReplaced.source = `${KR_BUILDINGS_FILE} (retrieved ${kb.retrieved}, OSM data as of ${kb.osm_base})`;
+} catch (e) {
+  report.warnings.push(`King's Road building extract unavailable: ${e.message}`);
+}
+
 const PROTECTED_TAGS = (t) => !!(t.name && (t.building === 'church' || t.building === 'school' || t.building === 'retail' || t.tourism || t.amenity || t.historic)) || ['church', 'chapel', 'cathedral', 'train_station', 'transportation'].includes(t.building) || /Theatre|Gallery|Church|Hall|Station/.test(t.name ?? '');
 for (const e of [...ways, ...rels]) {
   const t = e.tags ?? {};
@@ -207,7 +275,7 @@ for (const e of [...ways, ...rels]) {
   const outs = clippedRings(outer, 0.3);
   const ins = clippedRings(inner, 0.3);
   const { h, src } = buildingHeight(t, e.id);
-  for (const o of outs) {
+  for (const [k, o] of outs.entries()) {
     const holes = ins.filter((hh) => pointInPolygon(hh[0], o));
     const tris = triangulate(o, holes);
     const a = Math.abs(ringArea(o)) - holes.reduce((n, hh) => n + Math.abs(ringArea(hh)), 0);
@@ -217,7 +285,8 @@ for (const e of [...ways, ...rels]) {
     }
     const custom = CUSTOM_LANDMARKS[`${e.type[0]}${e.id}`];
     buildings.push({
-      id: `${e.type[0]}${e.id}`,
+      // a multipolygon with several outer rings gives several footprints: the second and later get a suffix
+      id: `${e.type[0]}${e.id}${k ? `-${k + 1}` : ''}`,
       osmId: e.id,
       ...(custom ? { custom: custom.model, landmarkId: custom.id } : {}),
       h: Math.round(h * 10) / 10,
@@ -230,6 +299,119 @@ for (const e of [...ways, ...rels]) {
       area: Math.round(a),
     });
   }
+}
+
+// King's Road frontages: every building with an edge facing the road between the Sloane Square end and
+// KR_END_S gets its own model ('kr:<id>', configured in src/map/landmarks/kingsRoadSpecs.ts).
+const krFrontage = [];
+for (const bl of buildings) {
+  if (bl.custom) continue;
+  const r = bl.rings[0];
+  const n = r.length / 2;
+  let ring = []; for (let i = 0; i < n; i++) ring.push([r[i * 2], r[i * 2 + 1]]);
+  const area = ringArea(ring);
+  let best = null;
+  for (let i = 0; i < n; i++) {
+    const a = ring[i], b = ring[(i + 1) % n], len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (len < 2) continue;
+    // outward normal for a counter-clockwise ring (x east, z south) is (dz, -dx) when area > 0
+    let nx = (b[1] - a[1]) / len, nz = -(b[0] - a[0]) / len; if (area < 0) { nx = -nx; nz = -nz; }
+    const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], q = krNear(m[0], m[1]);
+    const to = [(q.p[0] - m[0]) / (q.d || 1), (q.p[1] - m[1]) / (q.d || 1)];
+    if (q.d < 16 && nx * to[0] + nz * to[1] > 0.6 && q.s > 3 && q.s < KR_END_S) { if (!best || q.d < best.d) best = { d: q.d, s: q.s, len }; }
+  }
+  if (best) { bl.custom = `kr:${bl.id}`; krFrontage.push({ id: bl.id, s: round1(best.s), d: round1(best.d) }); }
+}
+krFrontage.sort((a, b) => a.s - b.s);
+report.kingsRoad = { frontages: krFrontage.length, replaced: krReplaced };
+
+// ---- King's Road carriageway fitted between the surveyed building lines --------------------------
+// The OSM centreline west of Royal Avenue runs about 2.5 m nearer the south frontage than the north, and
+// the default 12 m carriageway then reaches the south façades. Building footprints are the better-surveyed
+// edges, so within the corridor the carriageway is re-centred between the two building lines and narrowed
+// where they are close, keeping at least KR_MIN_PAVE of pavement each side. The shift is applied to every
+// road vertex near the line (fading out by 23 m) so side streets stay joined at their junctions.
+const KR_MIN_PAVE = 3.0, KR_MAX_W = 12, KR_MIN_W = 8.5;
+const krProfile = (() => {
+  const STEP = 5, s0 = -20, s1 = KR_END_S + 60;
+  const N = [], S = [];
+  for (let s = s0; s <= s1; s += STEP) { N.push(Infinity); S.push(Infinity); }
+  // nearest building edge on each side, sampled along every footprint edge; garden railings (Markham
+  // Square, Royal Avenue) front the road like a building line
+  const frontRings = [...buildings.map((bl) => bl.rings[0]), ...areas.filter((a) => a.kind === 'green').map((a) => a.ring)];
+  for (const r of frontRings) {
+    for (let i = 0; i < r.length; i += 2) {
+      const j = (i + 2) % r.length;
+      const L = Math.hypot(r[j] - r[i], r[j + 1] - r[i + 1]), n = Math.max(1, Math.ceil(L / 1.0));
+      for (let k = 0; k < n; k++) {
+        const x = r[i] + ((r[j] - r[i]) * k) / n, z = r[i + 1] + ((r[j + 1] - r[i + 1]) * k) / n;
+        const q = krNear(x, z);
+        if (q.d > 16 || q.s < s0 || q.s > s1) continue;
+        // north is to the right of travel (east → west): cross(t, p - q) > 0
+        const north = q.t[0] * (z - q.p[1]) - q.t[1] * (x - q.p[0]) > 0;
+        const bin = Math.round((q.s - s0) / STEP);
+        if (north) N[bin] = Math.min(N[bin], q.d); else S[bin] = Math.min(S[bin], q.d);
+      }
+    }
+  }
+  // fill gaps (side streets, squares) by linear interpolation; smooth over ±10 m
+  const fill = (a) => {
+    const idx = a.map((v, i) => (Number.isFinite(v) ? i : -1)).filter((i) => i >= 0);
+    return a.map((v, i) => {
+      if (Number.isFinite(v)) return v;
+      const lo = idx.filter((k) => k < i).pop(), hi = idx.find((k) => k > i);
+      if (lo == null) return a[hi]; if (hi == null) return a[lo];
+      return a[lo] + ((a[hi] - a[lo]) * (i - lo)) / (hi - lo);
+    });
+  };
+  // a footprint's nearest edge is the line; use the minimum over a window (the frontage, not a recess)
+  const winMin = (a) => a.map((_, i) => Math.min(...[-1, 0, 1].map((k) => a[i + k] ?? Infinity)));
+  const smooth = (a) => a.map((_, i) => { let s = 0, c = 0; for (let k = -1; k <= 1; k++) if (a[i + k] != null) { s += a[i + k]; c++; } return s / c; });
+  const Nf = smooth(winMin(fill(N))), Sf = smooth(winMin(fill(S)));
+  const prof = [];
+  for (let i = 0; i < Nf.length; i++) {
+    const s = s0 + i * STEP;
+    const total = Nf[i] + Sf[i];
+    const w = Math.max(KR_MIN_W, Math.min(KR_MAX_W, total - 2 * KR_MIN_PAVE));
+    let shift = (Nf[i] - Sf[i]) / 2; // + = toward the north line
+    // fade both corrections in from Sloane Square and out beyond the end of the reconstruction
+    const f = Math.max(0, Math.min(1, (s + 20) / 20, (KR_END_S + 60 - s) / 40));
+    shift = Math.max(-3, Math.min(3, shift)) * f;
+    prof.push({ s, shift: round1(shift), w: round1(KR_MAX_W + (w - KR_MAX_W) * f), N: round1(Nf[i]), S: round1(Sf[i]) });
+  }
+  return prof;
+})();
+const krProf = (s) => {
+  const P0 = krProfile[0], step = krProfile[1].s - P0.s;
+  const t = Math.max(0, Math.min(krProfile.length - 1.0001, (s - P0.s) / step)), i = Math.floor(t), f = t - i;
+  const a = krProfile[i], b = krProfile[i + 1];
+  return { shift: a.shift + (b.shift - a.shift) * f, w: a.w + (b.w - a.w) * f };
+};
+{
+  const moved = (x, z) => {
+    const q = krNear(x, z);
+    if (q.d > 23 || q.s < krProfile[0].s || q.s > krProfile[krProfile.length - 1].s) return null;
+    const wgt = q.d < 9 ? 1 : 1 - (q.d - 9) / 14;
+    const { shift } = krProf(q.s);
+    const n = [-q.t[1], q.t[0]]; // north (right of the east → west direction)
+    return [x + n[0] * shift * wgt, z + n[1] * shift * wgt];
+  };
+  const newLine = krLine.map((p) => moved(p[0], p[1]) ?? p);
+  for (const r of roads) {
+    const isKr = r.name === "King's Road";
+    let touched = false;
+    const wv = [];
+    for (let i = 0; i < r.pts.length; i += 2) {
+      const q0 = krNear(r.pts[i], r.pts[i + 1]);
+      const m = moved(r.pts[i], r.pts[i + 1]);
+      if (isKr) wv.push(q0.d < 3 && q0.s >= krProfile[0].s && q0.s <= krProfile[krProfile.length - 1].s ? round1(krProf(q0.s).w) : r.w);
+      if (m) { r.pts[i] = round1(m[0]); r.pts[i + 1] = round1(m[1]); touched = true; }
+    }
+    if (isKr && touched && wv.some((w) => w !== r.w)) r.wv = wv;
+  }
+  krLine.splice(0, krLine.length, ...newLine);
+  for (let i = 1; i < krLine.length; i++) krCum[i] = krCum[i - 1] + Math.hypot(krLine[i][0] - krLine[i - 1][0], krLine[i][1] - krLine[i - 1][1]);
+  report.kingsRoad.carriageway = { minPavement: KR_MIN_PAVE, maxShift: Math.max(...krProfile.map((p) => Math.abs(p.shift))), minWidth: Math.min(...krProfile.map((p) => p.w)) };
 }
 
 // ---- Custom landmark model data: Peter Jones -------------------------------------------------
@@ -590,6 +772,59 @@ try {
   report.warnings.push(`Duke of York Square detail unavailable: ${e.message}`);
 }
 
+// ---- King's Road corridor street detail ----------------------------------------------------------
+let kr = null;
+{
+  const r1 = (q) => [round1(q[0]), round1(q[1])];
+  const endP = krAt(KR_END_S), hwEnd = 24;
+  const nEnd = [-endP.t[1], endP.t[0]];
+  kr = {
+    source: 'OpenStreetMap: King\'s Road centreline from the main extract',
+    line: krLine.flatMap(r1),
+    sStart: KR_START_S,
+    sEnd: KR_END_S,
+    end: [...r1([endP.p[0] - nEnd[0] * hwEnd, endP.p[1] - nEnd[1] * hwEnd]), ...r1([endP.p[0] + nEnd[0] * hwEnd, endP.p[1] + nEnd[1] * hwEnd])],
+    roadW: 12,
+    /** Carriageway width at each centreline vertex (fitted between the building lines, see above). */
+    w: krLine.map((_, i) => round1(krProf(krCum[i]).w)),
+    trees: [], lamps: [], bollards: [], crossings: [], postBoxes: [], mouths: [], excl: [], rails: [],
+    frontages: krFrontage,
+  };
+  const inCorr = (p, w = 15) => { const q = krNear(p[0], p[1]); return q.d < w && q.s > KR_START_S - 10 && q.s < KR_END_S + 30; };
+  try {
+    const dr = JSON.parse(readFileSync(KR_FILE, 'utf8'));
+    const els = dr.elements;
+    const nodes = (pred) => els.filter((e) => e.type === 'node' && pred(e.tags ?? {})).map((e) => ({ osm: `node/${e.id}`, p: P(e), tags: e.tags }));
+    const pt = (n, extra = {}) => ({ osm: n.osm, x: round1(n.p[0]), z: round1(n.p[1]), ...extra });
+    kr.source = `OpenStreetMap (${KR_FILE}, retrieved ${dr.retrieved}, OSM data as of ${dr.osm_base})`;
+    kr.trees = nodes((t) => t.natural === 'tree').filter((n) => inCorr(n.p, 13)).map((n) => pt(n, { genus: n.tags.genus ?? n.tags.species ?? null }));
+    kr.lamps = nodes((t) => t.highway === 'street_lamp').filter((n) => inCorr(n.p, 12)).map((n) => pt(n));
+    kr.bollards = nodes((t) => t.barrier === 'bollard').filter((n) => inCorr(n.p, 12)).map((n) => pt(n));
+    kr.postBoxes = nodes((t) => t.amenity === 'post_box').filter((n) => inCorr(n.p, 12)).map((n) => pt(n));
+    kr.crossings = nodes((t) => t.highway === 'crossing').filter((n) => inCorr(n.p, 9)).map((n) => pt(n, { kind: n.tags.crossing ?? null }));
+    const railWays = els.filter((e) => e.type === 'way' && e.geometry && (e.tags?.barrier === 'fence' || e.tags?.barrier === 'railing' || e.tags?.barrier === 'guard_rail')).map((e) => ({ osm: `way/${e.id}`, pts: e.geometry.map(P), tags: e.tags }));
+    kr.rails = railWays.filter((w) => w.pts.some((q) => inCorr(q, 14))).map((w) => ({ osm: w.osm, kind: w.tags.barrier, h: w.tags.height ? +w.tags.height : null, pts: w.pts.flatMap(r1) }));
+  } catch (e) {
+    report.warnings.push(`King's Road street detail unavailable: ${e.message}`);
+  }
+  // areas the King's Road pavement must leave alone: Duke of York Square's paved areas, Sloane Square,
+  // and green spaces (Markham Square garden, Royal Avenue)
+  for (const a of areas) {
+    const q = []; for (let i = 0; i < a.ring.length; i += 2) q.push([a.ring[i], a.ring[i + 1]]);
+    if (!q.some((p) => inCorr(p, 25))) continue;
+    if (a.kind === 'green' || a.id === 'w5318345' || a.id === 'w900260769') kr.excl.push(a.ring);
+  }
+  if (square) kr.excl.push(square.ring);
+  // side-street mouths along the corridor (for crossings at street level)
+  for (const r of roads) {
+    if (r.name === "King's Road" || !['street', 'service'].includes(r.cls)) continue;
+    const q = []; for (let i = 0; i < r.pts.length; i += 2) q.push([r.pts[i], r.pts[i + 1]]);
+    const near = q.map((p) => krNear(p[0], p[1])).filter((n) => n.d < 16 && n.s > KR_START_S && n.s < KR_END_S + 5);
+    if (near.length) kr.mouths.push({ name: r.name ?? '', w: r.w, pts: r.pts });
+  }
+  report.kingsRoad.street = { trees: kr.trees.length, lamps: kr.lamps.length, bollards: kr.bollards.length, crossings: kr.crossings.length, postBoxes: kr.postBoxes.length, rails: kr.rails.length, mouths: kr.mouths.length };
+}
+
 const blockedAreas = areas.filter((a) => a.kind !== 'parking').map((a) => { const q = []; for (let i = 0; i < a.ring.length; i += 2) q.push([a.ring[i], a.ring[i + 1]]); return q; });
 // The square is protected public space: no development site may touch it.
 if (square) { const q = []; for (let i = 0; i < square.ring.length; i += 2) q.push([square.ring[i], square.ring[i + 1]]); blockedAreas.push(q); }
@@ -927,7 +1162,7 @@ function offsetRing(r, d) {
 }
 const squareRoofs = {};
 for (const bl of buildings) {
-  if (!bl.custom?.startsWith('square:') && !bl.custom?.startsWith('doy:')) continue;
+  if (!bl.custom?.startsWith('square:') && !bl.custom?.startsWith('doy:') && !bl.custom?.startsWith('kr:')) continue;
   const toPts = (fr) => { const q = []; for (let i = 0; i < fr.length; i += 2) q.push([fr[i], fr[i + 1]]); return q; };
   const outer = toPts(bl.rings[0]), holes = bl.rings.slice(1).map(toPts);
   const insets = {};
@@ -945,6 +1180,7 @@ for (const bl of buildings) {
 
 const formerSiteIds = new Set(plots.flatMap((p) => p.replaces));
 const out = {
+  kr,
   meta: {
     mapId: MAP_ID,
     mapVersion: MAP_VERSION,

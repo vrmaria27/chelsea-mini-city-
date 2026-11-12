@@ -8,6 +8,9 @@ import { F, K, chimney, edgesOf, latheAt, prismAt, toPts, turret, type Front, ty
 
 import { bays, facing, flatLid, fronts, longest, plainGrid, sign, slopedRoof, walls, type Ctx, type RoofInsets, type SignQuad, type SquareBuildingFootprint } from './buildingKit';
 import { DOY_BUILDERS } from './dukeOfYork';
+import { buildKr } from './kingsRoad';
+import { KR_SPECS } from './kingsRoadSpecs';
+import { KR_HOOKS } from './kingsRoadHooks';
 export type { RoofInsets, SignQuad, SquareBuildingFootprint } from './buildingKit';
 
 // ---- Royal Court Theatre (Walter Emden & Bertie Crewe, 1888; Grade II) ---------------------------------
@@ -719,12 +722,14 @@ export function buildSquareBuildings(b: MeshBuilder, buildings: SquareBuildingFo
   const built: string[] = [];
   const triangles: Record<string, number> = {};
   for (const bl of buildings) {
-    const fn = bl.custom ? BUILDERS[bl.custom] : undefined;
+    const krSpec = bl.custom?.startsWith('kr:') ? KR_SPECS[bl.custom.slice(3).replace(/-\d+$/, '')] : undefined;
+    const fn = bl.custom ? (krSpec ? (c: Ctx) => { buildKr(c, krSpec, KR_HOOKS); } : BUILDERS[bl.custom]) : undefined;
     if (!fn) continue;
     const before = b.vertexCount;
     const others = all.filter((o) => o.id !== bl.id && near(o, bl)).map((o) => o.rings[0]);
     fn({ b, bl, roofs: roofs[bl.id] ?? {}, centre, signs, others });
-    triangles[bl.custom!] = (triangles[bl.custom!] ?? 0) + (b.vertexCount - before) / 3;
+    const key = bl.custom!.startsWith('kr:') ? 'kr' : bl.custom!;
+    triangles[key] = (triangles[key] ?? 0) + (b.vertexCount - before) / 3;
     built.push(bl.id);
   }
   return { signs, built, triangles };

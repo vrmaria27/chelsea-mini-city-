@@ -100,6 +100,18 @@ export const LANDMARKS: readonly Landmark[] = [
     sources: [{ title: 'Duke of York Square revisited (Studio PDP)', url: 'https://studiopdp.com/blog/news-duke-of-york-square-revisited' }, { title: "Nex's King's Road café pavilion (RIBA Journal)", url: 'https://ribaj.com/buildings/kings-road-cafe-pavilion-duke-of-yorks-square-public-private-space-nex-jan-carlos-kucharek' }],
   },
   {
+    id: 'kings-road#terrace', name: 'King’s Road',
+    description: 'Looking west along the north side: the listed mid-19th-century stucco terrace at Nos 74–108, with shops below, and Whitelands House (1930s) across the road. The street is reconstructed as far as the Markham Square junction.',
+    x: -102, z: 41, pinY: 14, street: { x: -75.1, z: 19.4, yaw: 2.244 }, pitch: 0.04,
+    sources: [{ title: 'Nos 74–108 King’s Road (Historic England 1224735)', url: 'https://historicengland.org.uk/listing/the-list/list-entry/1224735' }, { title: 'Royal Hospital Conservation Area Appraisal (RBKC)', url: 'https://www.rbkc.gov.uk/planning-and-building-control/conservation-areas' }],
+  },
+  {
+    id: 'kings-road#markham-square', name: 'King’s Road at Markham Square',
+    description: 'The end of the current reconstruction. No. 138A on the east corner of Markham Square (early 19th century, with a full-height bow) and the former Markham Arms at No. 138. Beyond the junction the buildings are plain massing.',
+    x: -287, z: 205, pinY: 14, street: { x: -287.0, z: 217.4, yaw: -0.414 }, pitch: 0.08,
+    sources: [{ title: '138A King’s Road (Historic England 1225025)', url: 'https://historicengland.org.uk/listing/the-list/list-entry/1225025' }, { title: 'Markham Arms, Chelsea (Wikipedia)', url: 'https://en.wikipedia.org/wiki/Markham_Arms,_Chelsea' }],
+  },
+  {
     id: 'way/630720415', name: 'Royal Avenue',
     description: 'Gravel avenue between King’s Road and Burton Court, part of a scheme by Sir Christopher Wren, approved in 1681, to link the Royal Hospital with Kensington Palace.',
     x: -108.8, z: 197.7, pinY: 10, street: null,

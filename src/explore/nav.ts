@@ -8,9 +8,9 @@
 // garden, or within 1.3 m of a façade (bays, columns and shopfronts project beyond the footprint).
 // Courtyards and back gardens inside blocks are excluded because they are not pavement.
 
-export interface NavRoad { cls: 'main' | 'street' | 'service' | 'pedestrian' | 'path'; w: number; pts: number[]; name?: string | null }
+export interface NavRoad { cls: 'main' | 'street' | 'service' | 'pedestrian' | 'path'; w: number; pts: number[]; name?: string | null; wv?: number[] }
 export interface NavArea { id?: string; kind: 'green' | 'plaza' | 'carriageway' | 'parking'; ring: number[] }
-export interface NavBuilding { id: string; h: number; rings: number[][] }
+export interface NavBuilding { id: string; h: number; rings: number[][]; custom?: string }
 export interface NavSquare {
   ring: number[];
   fountain: { x: number; z: number; basin: number[] };
@@ -32,19 +32,39 @@ export interface NavDoy {
   cycleStands: { x: number; z: number; capacity: number; kind: string | null }[];
   track: { outer: number[][] } | null;
 }
-export interface NavData { roads: NavRoad[]; areas: NavArea[]; buildings: NavBuilding[]; square: NavSquare; doy?: NavDoy | null }
+/** King's Road corridor (Sloane Square to the Markham Square junction). */
+export interface NavKr {
+  line: number[];
+  sStart: number;
+  sEnd: number;
+  roadW: number;
+  /** Carriageway width at each centreline vertex. */
+  w?: number[];
+  trees: { x: number; z: number }[];
+  lamps: { x: number; z: number }[];
+  bollards: { x: number; z: number }[];
+  postBoxes: { x: number; z: number }[];
+  crossings: { x: number; z: number; kind: string | null }[];
+}
+export interface NavData { roads: NavRoad[]; areas: NavArea[]; buildings: NavBuilding[]; square: NavSquare; doy?: NavDoy | null; kr?: NavKr | null }
 
 /** The Duke of York Square plaza areas (OSM ids) that are public paved space. */
 export const DOY_PLAZA_AREAS = ['w5318345', 'w900260769'];
 /** Zone margin around Duke of York Square's paved areas (takes in the King's Road pavement). */
 export const DOY_ZONE_M = 5;
 export const DOY_GROUND = 0.32;
+/** King's Road pavement height (matches KR_PAVE in kingsRoad.ts). */
+export const KR_GROUND = 0.5;
+/** Walkable band either side of King's Road beyond the carriageway edge (m). */
+export const KR_BAND = 9.5;
+/** Distance before the end of the reconstruction at which the end-of-area message appears (m). */
+export const KR_END_WARN = 14;
 /** Directions used to place the square's furniture (see dukeOfYorkSquare.ts). */
 const DOY_KR: [number, number] = [0.754, -0.658];
 const DOY_GU: [number, number] = [0.619, 0.785];
 
 export type NavClass =
-  | 'ok' | 'outside' | 'building' | 'carriageway' | 'water' | 'tree' | 'feature' | 'garden' | 'not-public';
+  | 'ok' | 'outside' | 'end' | 'building' | 'carriageway' | 'water' | 'tree' | 'feature' | 'garden' | 'not-public';
 
 /** Exploration is limited to this distance (m) from the square's kerb: the well-reconstructed area. */
 export const ZONE_M = 38;
@@ -58,11 +78,13 @@ const FOOTWAY_BAND = 1.6; // beyond a footway edge
 const TRUNK_R = 0.9;
 /** Minimum distance from a building footprint: bays, columns and shopfronts project beyond it. */
 export const FACADE_CLEARANCE = 1.3;
+/** Clearance in front of the King's Road frontages. */
+export const KR_FACADE_CLEARANCE = 0.8;
 const CELL = 16;
 
-interface Seg { ax: number; az: number; bx: number; bz: number; hw: number; ref: number }
+interface Seg { ax: number; az: number; bx: number; bz: number; hw: number; ref: number; main?: boolean; kr?: boolean }
 interface Poly { ring: number[]; minX: number; maxX: number; minZ: number; maxZ: number }
-interface Bldg extends Poly { id: string; h: number; holes: number[][] }
+interface Bldg extends Poly { id: string; h: number; holes: number[][]; /** Façade clearance (m). */ c: number }
 
 export function pointInRing(x: number, z: number, r: ArrayLike<number>): boolean {
   let inside = false;
@@ -131,6 +153,11 @@ export class NavField {
   private doyGates: { x: number; z: number }[] = [];
   readonly doyBounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null = null;
   private obstacles: { x: number; z: number; r: number; kind: NavClass }[] = [];
+  private kr: { line: [number, number][]; cum: number[]; sStart: number; sEnd: number; hw: number; hwv: number[] } | null = null;
+  private krObstacles = new Buckets<{ x: number; z: number; r: number; kind: NavClass }>();
+  private krCrossings: { x: number; z: number; tx: number; tz: number }[] = [];
+  /** Axis-aligned bounds of the King's Road corridor zone. */
+  readonly krBounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null = null;
 
   constructor(data: NavData) {
     this.square = data.square;
@@ -139,19 +166,22 @@ export class NavField {
     const pad = 40;
     // Duke of York Square's extent (for prefiltering geometry): its paved areas, before they are set up below
     const doyAreas = data.doy ? [...data.areas.filter((a) => DOY_PLAZA_AREAS.includes(a.id ?? '')).map((a) => a.ring), ...(data.doy.forecourt ? [data.doy.forecourt.ring] : [])].map(bounds) : [];
-    const boxes = [this.zoneBounds, ...doyAreas];
+    const krb = data.kr ? (() => { const xs = data.kr.line.filter((_, i) => i % 2 === 0), zs = data.kr.line.filter((_, i) => i % 2 === 1); return { minX: Math.min(...xs) - 30, maxX: Math.max(...xs) + 30, minZ: Math.min(...zs) - 30, maxZ: Math.max(...zs) + 30 }; })() : null;
+    const boxes = [this.zoneBounds, ...doyAreas, ...(krb ? [krb] : [])];
     const near = (p: Poly) => boxes.some((zb) => p.maxX > zb.minX - pad && p.minX < zb.maxX + pad && p.maxZ > zb.minZ - pad && p.minZ < zb.maxZ + pad);
     for (const b of data.buildings) {
       const p = bounds(b.rings[0]);
       if (!near(p)) continue;
-      const item: Bldg = { ...p, id: b.id, h: b.h, holes: b.rings.slice(1) };
-      const c = FACADE_CLEARANCE;
+      // King's Road frontages project less (flush shopfronts, fascias ≤ 0.35 m) than the square's bays and porticos
+      const c = b.custom?.startsWith('kr:') ? KR_FACADE_CLEARANCE : FACADE_CLEARANCE;
+      const item: Bldg = { ...p, id: b.id, h: b.h, holes: b.rings.slice(1), c };
       this.buildings.add(item, p.minX - c, p.maxX + c, p.minZ - c, p.maxZ + c);
     }
     data.roads.forEach((r, ref) => {
       const target = r.cls === 'main' || r.cls === 'street' || r.cls === 'service' ? this.carriageways : this.footways;
       for (let i = 0; i + 3 < r.pts.length; i += 2) {
-        const s: Seg = { ax: r.pts[i], az: r.pts[i + 1], bx: r.pts[i + 2], bz: r.pts[i + 3], hw: r.w / 2, ref };
+        const w = r.wv ? Math.max(r.wv[i / 2], r.wv[i / 2 + 1]) : r.w;
+        const s: Seg = { ax: r.pts[i], az: r.pts[i + 1], bx: r.pts[i + 2], bz: r.pts[i + 3], hw: w / 2, ref, main: r.cls === 'main', kr: r.name === "King's Road" };
         const m = s.hw + PAVEMENT_BAND;
         target.add(s, Math.min(s.ax, s.bx) - m, Math.max(s.ax, s.bx) + m, Math.min(s.az, s.bz) - m, Math.max(s.az, s.bz) + m);
       }
@@ -203,6 +233,81 @@ export class NavField {
         (this as { doyBounds: NavField['doyBounds'] }).doyBounds = { minX: Math.min(...xs) - DOY_ZONE_M, maxX: Math.max(...xs) + DOY_ZONE_M, minZ: Math.min(...zs) - DOY_ZONE_M, maxZ: Math.max(...zs) + DOY_ZONE_M };
       }
     }
+    const k = data.kr;
+    if (k) {
+      const line: [number, number][] = [];
+      for (let i = 0; i + 1 < k.line.length; i += 2) line.push([k.line[i], k.line[i + 1]]);
+      const cum = [0];
+      for (let i = 1; i < line.length; i++) cum.push(cum[i - 1] + Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]));
+      this.kr = { line, cum, sStart: k.sStart, sEnd: k.sEnd, hw: k.roadW / 2, hwv: line.map((_, i) => (k.w?.[i] ?? k.roadW) / 2) };
+      const add = (o: { x: number; z: number; r: number; kind: NavClass }) => this.krObstacles.add(o, o.x - o.r, o.x + o.r, o.z - o.r, o.z + o.r);
+      for (const t of k.trees) add({ x: t.x, z: t.z, r: TRUNK_R, kind: 'tree' });
+      for (const l of k.lamps) add({ x: l.x, z: l.z, r: 0.35, kind: 'feature' });
+      for (const b of k.bollards) add({ x: b.x, z: b.z, r: 0.3, kind: 'feature' });
+      for (const b of k.postBoxes) add({ x: b.x, z: b.z, r: 0.5, kind: 'feature' });
+      for (const c of k.crossings) { const q = this.krNear(c.x, c.z); this.krCrossings.push({ x: q.p[0], z: q.p[1], tx: q.t[0], tz: q.t[1] }); }
+      const pts = line.filter((_, i) => cum[i] >= k.sStart - 20 && cum[i] <= k.sEnd + 20);
+      const m = this.kr.hw + KR_BAND;
+      (this as { krBounds: NavField['krBounds'] }).krBounds = { minX: Math.min(...pts.map((p) => p[0])) - m, maxX: Math.max(...pts.map((p) => p[0])) + m, minZ: Math.min(...pts.map((p) => p[1])) - m, maxZ: Math.max(...pts.map((p) => p[1])) + m };
+    }
+  }
+
+  /** Nearest point on the King's Road centreline: distance, chainage, point and direction. */
+  krNear(x: number, z: number): { d: number; s: number; p: [number, number]; t: [number, number] } {
+    let best = { d: Infinity, s: 0, p: [0, 0] as [number, number], t: [1, 0] as [number, number] };
+    const k = this.kr;
+    if (!k) return best;
+    for (let i = 0; i + 1 < k.line.length; i++) {
+      const a = k.line[i], b = k.line[i + 1], dx = b[0] - a[0], dz = b[1] - a[1], L = k.cum[i + 1] - k.cum[i];
+      if (L < 1e-6) continue;
+      const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / (L * L)));
+      const p: [number, number] = [a[0] + dx * t, a[1] + dz * t], d = Math.hypot(x - p[0], z - p[1]);
+      if (d < best.d) best = { d, s: k.cum[i] + t * L, p, t: [dx / L, dz / L] };
+    }
+    return best;
+  }
+
+  /** Half-width of the King's Road carriageway at chainage s. */
+  krHw(s: number): number {
+    const k = this.kr;
+    if (!k) return 0;
+    for (let i = 0; i + 1 < k.cum.length; i++) if (s <= k.cum[i + 1]) { const f = Math.max(0, (s - k.cum[i]) / ((k.cum[i + 1] - k.cum[i]) || 1)); return k.hwv[i] + (k.hwv[i + 1] - k.hwv[i]) * f; }
+    return k.hwv[k.hwv.length - 1];
+  }
+
+  /** Inside the King's Road corridor zone (pavements both sides between its start and its end). */
+  inKrZone(x: number, z: number): boolean {
+    const k = this.kr, b = this.krBounds;
+    if (!k || !b || x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) return false;
+    const q = this.krNear(x, z);
+    return q.d <= this.krHw(q.s) + KR_BAND && q.s >= k.sStart && q.s <= k.sEnd;
+  }
+
+  /** Just beyond the end of the reconstruction (the King's Road corridor past the Markham Square junction). */
+  pastKrEnd(x: number, z: number): boolean {
+    const k = this.kr;
+    if (!k) return false;
+    const q = this.krNear(x, z);
+    return q.d <= this.krHw(q.s) + KR_BAND + 4 && q.s > k.sEnd && q.s < k.sEnd + 120;
+  }
+
+  /** Within KR_END_WARN of the end of the reconstruction (for the end-of-area message). */
+  nearKrEnd(x: number, z: number): boolean {
+    const k = this.kr;
+    if (!k || !this.inKrZone(x, z)) return false;
+    return this.krNear(x, z).s > k.sEnd - KR_END_WARN;
+  }
+
+  private krClass(x: number, z: number): NavClass | null {
+    for (const o of this.krObstacles.at(x, z)) if (Math.hypot(x - o.x, z - o.z) < o.r) return o.kind;
+    const q = this.krNear(x, z);
+    const hw = this.krHw(q.s);
+    if (q.d < hw + 0.3) {
+      // the carriageway: only at a mapped crossing (a 3 m wide strip straight across the road)
+      const onCrossing = this.krCrossings.some((c) => { const dx = x - c.x, dz = z - c.z; return Math.abs(dx * c.tx + dz * c.tz) < 1.6 && Math.abs(-dx * c.tz + dz * c.tx) < hw + 0.5; });
+      return onCrossing ? 'ok' : 'carriageway';
+    }
+    return null;
   }
 
   /** Inside one of Duke of York Square's paved public areas (plaza or forecourt). */
@@ -232,7 +337,7 @@ export class NavField {
   }
 
   inZone(x: number, z: number): boolean {
-    return pointInRing(x, z, this.square.ring) || ringDist(x, z, this.square.ring) <= ZONE_M || this.inDoyZone(x, z);
+    return pointInRing(x, z, this.square.ring) || ringDist(x, z, this.square.ring) <= ZONE_M || this.inDoyZone(x, z) || this.inKrZone(x, z);
   }
 
   inSquare(x: number, z: number): boolean {
@@ -252,8 +357,8 @@ export class NavField {
 
   /** Within FACADE_CLEARANCE of a building footprint (outside it). */
   nearFacade(x: number, z: number): boolean {
-    const c = FACADE_CLEARANCE;
     for (const b of this.buildings.at(x, z)) {
+      const c = b.c;
       if (x < b.minX - c || x > b.maxX + c || z < b.minZ - c || z > b.maxZ + c) continue;
       if (ringDist(x, z, b.ring) < c) return true;
     }
@@ -262,8 +367,14 @@ export class NavField {
 
   /** Why a point is or is not walkable. */
   classify(x: number, z: number): NavClass {
-    if (!Number.isFinite(x) || !Number.isFinite(z) || !this.inZone(x, z)) return 'outside';
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return 'outside';
+    if (!this.inZone(x, z)) return this.pastKrEnd(x, z) ? 'end' : 'outside';
     if (this.buildingAt(x, z) || this.nearFacade(x, z)) return 'building';
+    const inKr = this.kr !== null && this.inKrZone(x, z) && !this.inSquare(x, z) && !(this.doyRings.length && this.inDoy(x, z));
+    if (inKr) {
+      const c = this.krClass(x, z);
+      if (c) return c;
+    }
     if (this.doyRings.length && this.inDoyZone(x, z)) {
       const ob = this.doyObstacle(x, z);
       if (ob) return ob;
@@ -284,7 +395,9 @@ export class NavField {
     let nearCarriageway = false;
     for (const s of this.carriageways.at(x, z)) {
       const d = segDist(x, z, s.ax, s.az, s.bx, s.bz);
-      if (d < s.hw + 0.25) return 'carriageway';
+      // side streets meeting King's Road are crossed at their mouths (the pavement line continues across)
+      // (King's Road itself is classified above, with its fitted width)
+      if (d < s.hw + 0.25 && (!inKr || (s.main && !s.kr))) return 'carriageway';
       if (d <= s.hw + PAVEMENT_BAND) nearCarriageway = true;
     }
     if (plaza || nearCarriageway) return 'ok';
@@ -298,7 +411,9 @@ export class NavField {
 
   /** Map height of the walking surface at a walkable point. */
   groundY(x: number, z: number): number {
-    return this.inSquare(x, z) ? SQUARE_GROUND : this.doyRings.length && this.inDoy(x, z) ? DOY_GROUND : STREET_GROUND;
+    if (this.inSquare(x, z)) return SQUARE_GROUND;
+    if (this.doyRings.length && this.inDoy(x, z)) return DOY_GROUND;
+    return this.kr && this.inKrZone(x, z) ? KR_GROUND : STREET_GROUND;
   }
 
   /**

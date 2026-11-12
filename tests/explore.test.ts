@@ -67,7 +67,7 @@ test('the static scene extrudes every non-custom footprint (no hidden footprints
   const src = readFileSync('src/map/osmMap.ts', 'utf8');
   assert.ok(!/hidden\.has|replaces/.test(src));
   const tris = osmMap.buildStatic().toFloat32().length / 27;
-  assert.ok(tris > 100_000 && tris < 200_000, `static triangles ${tris}`);
+  assert.ok(tris > 100_000 && tris < 330_000, `static triangles ${tris}`);
 });
 
 // ---- Walkable surfaces ---------------------------------------------------------------------------
@@ -95,7 +95,8 @@ test('buildings, carriageways and the area beyond the zone are not walkable', ()
       if (nav.inZone(x, z) && !nav.inSquare(x, z)) assert.equal(nav.classify(x, z), 'carriageway', `${x},${z}`);
     }
   }
-  assert.equal(nav.classify(-300, 200), 'outside', 'Wellington Square area is outside street level');
+  assert.equal(nav.classify(-300, 120), 'outside', 'Markham Square (beyond its King\'s Road entrance) is outside street level');
+  assert.equal(nav.classify(-210, 230), 'outside', 'Wellington Square is outside street level');
   assert.equal(nav.classify(NaN, 0), 'outside');
 });
 
@@ -105,10 +106,10 @@ test('walkable points are on public surfaces within the bounded zone, with a rea
   for (let x = b.minX; x <= b.maxX; x += 1) for (let z = b.minZ; z <= b.maxZ; z += 1) {
     if (!nav.isWalkable(x, z)) continue;
     ok++;
-    assert.ok(nav.inSquare(x, z) || ringDist(x, z, sq.ring) <= ZONE_M + 1e-6);
+    assert.ok(nav.inSquare(x, z) || ringDist(x, z, sq.ring) <= ZONE_M + 1e-6 || nav.inKrZone(x, z));
     assert.equal(nav.buildingAt(x, z), null);
   }
-  assert.ok(ok > 2500 && ok < 8000, `walkable area ${ok} m²`);
+  assert.ok(ok > 2500 && ok < 11000, `walkable area ${ok} m²`);
 });
 
 test('line of sight is blocked by building masses but not by open space', () => {
