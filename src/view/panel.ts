@@ -5,7 +5,7 @@ import { LANDMARKS } from '../explore/landmarks';
 
 export type Action =
   | 'toStreet' | 'toMiniature' | 'rotL' | 'rotR' | 'scaleDown' | 'scaleUp' | 'resetView'
-  | 'turnL' | 'turnR' | 'labels' | 'lowDetail' | 'reducedMotion' | 'snap' | 'seated' | 'about' | 'exitVR'
+  | 'turnL' | 'turnR' | 'returnFromEnd' | 'labels' | 'lowDetail' | 'reducedMotion' | 'snap' | 'seated' | 'about' | 'exitVR'
   | `place:${string}`;
 
 export interface PanelState {
@@ -19,11 +19,13 @@ export interface PanelState {
   title: string;
   body: string;
   warn: boolean;
+  /** At the end of the King's Road area: offer a way back (label names the place). */
+  endReturn?: string | null;
 }
 
 interface Btn { action: Action; label: string; x: number; y: number; w: number; h: number; on?: boolean; primary?: boolean; small?: boolean }
 
-const W = 1024, H = 1000;
+const W = 1024, H = 1050;
 const C = { bg: '#faf6ee', line: '#e0d4bf', ink: '#2e2a26', soft: '#7a6f63', green: '#2f5a45', hover: '#f3e3c3', warn: '#a33b32', gold: '#c99a4a' };
 
 export class ExplorePanel {
@@ -93,6 +95,7 @@ export class ExplorePanel {
     });
     y += 32 + Math.ceil(LANDMARKS.length / 2) * 50 + 10;
     this.infoY = y;
+    if (s.mode === 'street' && s.endReturn) out.push({ action: 'returnFromEnd', label: `↩ ${s.endReturn}`, x: W - 28 - 360, y: y + 72, w: 344, h: 50, primary: true, small: true });
     y += 132 + 14;
     const sw = (W - P * 2 - 4 * 10) / 5;
     const settings: [Action, string, boolean][] = [

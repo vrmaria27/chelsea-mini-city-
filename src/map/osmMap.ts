@@ -8,8 +8,10 @@ import { UPPER_TOP, buildPeterJones, peterJonesDecals, type LandmarkModelData } 
 import { SQUARE_Y, buildSloaneSquare, buildSquareNature, type SquareData } from './landmarks/sloaneSquare';
 import { buildSquareBuildings, squareSignDecal, type RoofInsets, type SignQuad } from './landmarks/squareBuildings';
 import { DOY_PLAZA_IDS, addDoyNature, buildDukeOfYorkSquare, type DoyData } from './landmarks/dukeOfYorkSquare';
+import { buildKrFurniture, buildKrStreet, krNearest, useKingsRoadLine, type KrData } from './landmarks/kingsRoad';
+import { addKrNature } from './landmarks/kingsRoadNature';
 
-export interface OsmRoad { id: number; name: string | null; hw: string; cls: 'main' | 'street' | 'service' | 'pedestrian' | 'path'; w: number; pts: number[]; sidewalk?: boolean }
+export interface OsmRoad { id: number; name: string | null; hw: string; cls: 'main' | 'street' | 'service' | 'pedestrian' | 'path'; w: number; pts: number[]; sidewalk?: boolean; /** Per-vertex widths (King's Road, fitted between the building lines). */ wv?: number[] }
 export interface OsmArea { id: string; kind: 'green' | 'plaza' | 'carriageway' | 'parking'; name: string | null; ring: number[]; tris: number[] }
 export interface OsmBuilding {
   id: string; h: number; hSrc: string; type: string; name: string | null; protected: boolean; rings: number[][]; tris: number[];
@@ -28,6 +30,7 @@ interface OsmData {
   square: SquareData | null;
   squareRoofs: Record<string, RoofInsets>;
   doy: DoyData | null;
+  kr: KrData | null;
 }
 
 export const OSM = data as unknown as OsmData;
@@ -62,19 +65,20 @@ function wallColour(b: OsmBuilding): RGB {
   return r < 6 ? BRICKS[h % BRICKS.length] : r < 9 ? CREAMS[h % CREAMS.length] : PASTELS[h % PASTELS.length];
 }
 
-function ribbon(b: MeshBuilder, pts: number[], w: number, y: number, col: RGB): void {
-  const hw = w / 2;
+function ribbon(b: MeshBuilder, pts: number[], w: number, y: number, col: RGB, wv?: number[]): void {
+  const hwAt = (k: number) => (wv ? wv[k] : w) / 2;
   for (let i = 0; i + 3 < pts.length; i += 2) {
     const ax = pts[i], az = pts[i + 1], bx = pts[i + 2], bz = pts[i + 3];
     const len = Math.hypot(bx - ax, bz - az);
     if (len < 0.01) continue;
-    const nx = (-(bz - az) / len) * hw, nz = ((bx - ax) / len) * hw;
+    const ha = hwAt(i / 2), hb = hwAt(i / 2 + 1);
+    const ux = -(bz - az) / len, uz = (bx - ax) / len;
     // quad facing up: (a - n), (b - n), (b + n), (a + n) with upward winding
-    const p0 = [ax - nx, y, az - nz], p1 = [bx - nx, y, bz - nz], p2 = [bx + nx, y, bz + nz], p3 = [ax + nx, y, az + nz];
+    const p0 = [ax - ux * ha, y, az - uz * ha], p1 = [bx - ux * hb, y, bz - uz * hb], p2 = [bx + ux * hb, y, bz + uz * hb], p3 = [ax + ux * ha, y, az + uz * ha];
     upQuad(b, p0, p1, p2, p3, col);
   }
   // round joins so bends and junctions have no gaps
-  for (let i = 0; i < pts.length; i += 2) disc(b, pts[i], pts[i + 1], y, hw, col);
+  for (let i = 0; i < pts.length; i += 2) disc(b, pts[i], pts[i + 1], y, hwAt(i / 2), col);
 }
 
 function upQuad(b: MeshBuilder, p0: number[], p1: number[], p2: number[], p3: number[], col: RGB): void {
@@ -107,6 +111,7 @@ function ringArea(r: number[]): number {
 const DETAIL_RADIUS = 240;
 const GLASS = hex('#46525e');
 const SHOP_GLASS = hex('#39434d');
+const MASSING = hex('#dcd6cb');
 
 /**
  * Extruded footprint: outward-facing walls for the outer ring and courtyard walls for holes; flat
@@ -114,10 +119,12 @@ const SHOP_GLASS = hex('#39434d');
  * floor for shops and a pale cornice line so they do not read as blank boxes at eye level. Window
  * positions are generic (one per 3.4 m bay and 3.2 m storey), not surveyed.
  */
-function extrude(b: MeshBuilder, bl: OsmBuilding, hidden: boolean, detail = false, isParty?: (x: number, z: number) => boolean): void {
+function extrude(b: MeshBuilder, bl: OsmBuilding, hidden: boolean, detail = false, isParty?: (x: number, z: number) => boolean, muted = false): void {
   if (hidden) return;
-  const wall = wallColour(bl);
-  const roof = shade(ROOF[hash(bl.id) % ROOF.length], 1);
+  // beyond the end of the King's Road reconstruction: a plain pale massing model (not a reconstruction)
+  const wall = muted ? MASSING : wallColour(bl);
+  if (muted) detail = false;
+  const roof = muted ? shade(MASSING, 0.9) : shade(ROOF[hash(bl.id) % ROOF.length], 1);
   const cornice = shade(wall, 1.22);
   const h = bl.h;
   const shopType = bl.type === 'retail' || bl.type === 'commercial';
@@ -194,6 +201,13 @@ function northArrow(b: MeshBuilder, x: number, z: number, y: number): void {
 let squareSigns: SignQuad[] = [];
 /** Green areas that get no decorative scatter trees (the Duke of York's HQ playing field is open grass). */
 const NO_SCATTER = new Set(['w1368124984']);
+/** Triangle counts of the King's Road street layers (for checks and docs). */
+export let krStats: Record<string, number> = {};
+/** True beyond the end of the King's Road reconstruction (near the road, west of the Markham Square junction). */
+export function beyondKrEnd(x: number, z: number, kr: KrData): boolean {
+  const q = krNearest(x, z);
+  return q.s > kr.sEnd + 2 && q.d < 60;
+}
 /** Triangle counts of the Duke of York Square layers (for checks and docs). */
 export let doyStats: Record<string, number> = {};
 const doyPlaza = () => OSM.areas.filter((a) => DOY_PLAZA_IDS.includes(a.id)).map((a) => ({ ring: a.ring, tris: a.tris }));
@@ -220,17 +234,21 @@ function buildStatic(): MeshBuilder {
   for (const a of OSM.areas) flatTris(b, a.tris, Y[a.kind], AREA_COL[a.kind]);
   // Roads: wider classes on top
   const order: OsmRoad['cls'][] = ['path', 'pedestrian', 'service', 'street', 'main'];
-  for (const cls of order) for (const r of OSM.roads) if (r.cls === cls) ribbon(b, r.pts, r.w, Y[cls], ROAD_COL[cls]);
+  for (const cls of order) for (const r of OSM.roads) if (r.cls === cls) ribbon(b, r.pts, r.w, Y[cls], ROAD_COL[cls], r.wv);
   // Buildings. Landmarks with a custom model replace their generic extrusion (no duplicate façades).
   // Every other footprint, including the former game sites, is an extruded mass at its OSM height.
   const sq = OSM.square;
   const cx = sq ? 177 : 0, cz = sq ? -150 : 0;
   const centre = (bl: OsmBuilding) => { const r = bl.rings[0]; let x = 0, z = 0; for (let i = 0; i < r.length; i += 2) { x += r[i]; z += r[i + 1]; } return [x / (r.length / 2), z / (r.length / 2)]; };
-  const near = OSM.buildings.filter((bl) => { const [x, z] = centre(bl); return Math.hypot(x - cx, z - cz) < DETAIL_RADIUS + 60; });
+  const kr = OSM.kr;
+  if (kr) useKingsRoadLine(kr.line);
+  const near = OSM.buildings.filter((bl) => { const [x, z] = centre(bl); return Math.hypot(x - cx, z - cz) < DETAIL_RADIUS + 60 || (!!kr && krNearest(x, z).d < 100); });
   const isParty = (x: number, z: number) => near.some((o) => pointInRing(x, z, o.rings[0]));
   for (const bl of OSM.buildings) {
     const [x, z] = centre(bl);
-    extrude(b, bl, !!bl.custom, !!sq && Math.hypot(x - cx, z - cz) < DETAIL_RADIUS, isParty);
+    // window rows near Sloane Square and in the background of the King's Road corridor (side-street returns)
+    const nearKr = !!kr && (() => { const q = krNearest(x, z); return q.d < 60 && q.s >= kr.sStart && q.s <= kr.sEnd; })();
+    extrude(b, bl, !!bl.custom, (!!sq && Math.hypot(x - cx, z - cz) < DETAIL_RADIUS) || nearKr, isParty, !!kr && beyondKrEnd(x, z, kr));
   }
   for (const lm of OSM.landmarkModels) if (lm.model === 'peter-jones') buildPeterJones(b, lm);
   if (OSM.square) buildSloaneSquare(b, OSM.square);
@@ -241,6 +259,13 @@ function buildStatic(): MeshBuilder {
     const r = buildDukeOfYorkSquare(b, OSM.doy, doyPlaza(), OSM.buildings.find((x) => x.id === 'w5317958')?.rings[0]);
     squareSigns = squareSigns.concat(r.signs);
     doyStats = r.stats;
+  }
+  // King's Road: pavement and kerbs along both sides, street furniture from OSM
+  if (kr) {
+    const inB = (x: number, z: number) => OSM.buildings.some((bl) => { const r = bl.rings[0]; return x > -HALF && pointInRing(x, z, r); });
+    const st = buildKrStreet(b, kr, OSM.roads, inB);
+    const fu = buildKrFurniture(b, kr, squareSigns);
+    krStats = { pavement: st.tris, furniture: fu.tris };
   }
   // Decorative trees inside green spaces (positions are not sourced; deterministic scatter)
   const rand = rng(51491);
@@ -307,7 +332,7 @@ export const osmMap: SceneMap = {
   notes:
     `Streets, public spaces, building footprints and landmark positions come from OpenStreetMap (retrieved ${OSM.meta.retrieved.slice(0, 10)}). ` +
     'Road widths without a width tag, building heights without height/levels tags, façade colours and trees outside Sloane Square are stylised estimates.',
-  nature: OSM.square ? () => buildSquareNature(OSM.square!, OSM.doy ? (n) => addDoyNature(OSM.doy!, doyPlaza(), n) : undefined) : undefined,
+  nature: OSM.square ? () => buildSquareNature(OSM.square!, (n) => (OSM.doy ? addDoyNature(OSM.doy, doyPlaza(), n) : 0) + (OSM.kr ? addKrNature(OSM.kr, n) : 0)) : undefined,
   decals: () => {
     const out = OSM.landmarkModels.filter((m) => m.model === 'peter-jones').flatMap((m) => peterJonesDecals(m));
     const sq = squareSignDecal(squareSigns);

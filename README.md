@@ -2,7 +2,7 @@
 
 Explore a reconstruction of the streets around **Sloane Square, King's Road and Duke of York Square** in Chelsea, London: first as a tabletop miniature, then at street level. It runs on **Meta Quest 3** (WebXR in the Quest Browser) and on desktop.
 
-> **Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright)** (ODbL 1.0). The buildings around Sloane Square and Duke of York Square, the Saatchi Gallery and Peter Jones are hand-built procedural models based on photographs and published descriptions; elsewhere buildings are approximate masses at their mapped heights. It is an approximate model, not a photorealistic one.
+> **Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright)** (ODbL 1.0). The buildings around Sloane Square and Duke of York Square, the Saatchi Gallery, Peter Jones and both sides of King's Road as far as Markham Square are hand-built procedural models based on photographs and published descriptions; elsewhere buildings are approximate masses at their mapped heights. It is an approximate model, not a photorealistic one.
 
 | Miniature | Street level |
 |---|---|
@@ -18,7 +18,7 @@ This project began as a city-builder ("Chelsea Mini City"). That version is pres
 2. **Choose a spot.** Click the pavement or the square, or pick a place from the list.
 3. **Go to street level** and look around. **Back to miniature** (or `M`) returns.
 
-Street level covers the two best-reconstructed areas: Sloane Square, and Duke of York Square with the Saatchi Gallery forecourt. Places further away (Royal Avenue, Burton Court and others) are shown on the miniature with a pin.
+Street level covers the best-reconstructed areas: Sloane Square; Duke of York Square with the Saatchi Gallery forecourt; and both pavements of King's Road from Sloane Square to the Markham Square junction, where an *End of current area* message offers a way back. Places further away (Royal Avenue, Burton Court and others) are shown on the miniature with a pin.
 
 | | Desktop | VR (Quest 3) |
 |---|---|---|
@@ -177,6 +177,28 @@ You can walk the square and the gallery forecourt; the track and playing field a
 
 The reference inventory, observed vs estimated features, comparison screenshots, performance and a headset checklist are in [docs/duke-of-york-square.md](docs/duke-of-york-square.md).
 
+## King's Road to Markham Square
+
+Both sides of King's Road from Sloane Square to the Markham Square junction are rebuilt building by building: 60 street-facing buildings, each with its own configuration. The configurations cover storeys, window rhythm, materials, roofline, shopfront arrangement and features, with sources and confidence. They are based on Historic England listings, the RBKC Royal Hospital Conservation Area Appraisal and dated, openly licensed photographs.
+
+The landmark frontages include:
+- the Sidney Smith Buildings;
+- the listed stucco terrace at Nos 74–108;
+- the former Colville Tavern;
+- Whitelands House;
+- the former Chelsea Drugstore;
+- the Wellington Square houses at Nos 55–65;
+- 120 King's Road;
+- the former Markham Arms and No. 138A.
+
+Shop branding is not modelled. The carriageway is re-centred between the surveyed building lines, so both pavements are continuous. The scene ends at the junction: beyond it, buildings are plain massing and walking is refused.
+
+| Looking west along the listed terrace | King's Road at Markham Square |
+|---|---|
+| ![King's Road, Nos 74–108](docs/kr-terrace-74-108.jpg) | ![King's Road at Markham Square](docs/kr-markham-square.jpg) |
+
+The building-by-building coverage table, references, unresolved frontages, performance and a headset checklist are in [docs/kings-road.md](docs/kings-road.md).
+
 ## Install, run, build
 
 Requires **Node.js 20+**.
@@ -243,7 +265,7 @@ public/             index.html (HUD markup and styles)
 ## Known limitations
 
 - Not yet tested on a Quest 3 headset (controllers, hand panel, teleport comfort and performance are unverified).
-- Street level is limited to Sloane Square and Duke of York Square. Elsewhere the model is for viewing as a miniature.
+- Street level is limited to Sloane Square, Duke of York Square and King's Road as far as Markham Square. Elsewhere the model is for viewing as a miniature.
 - Most buildings away from the square are approximate masses with flat roofs. The full list, ordered by impact on realism, is in [docs/explorer.md](docs/explorer.md#remaining-visual-approximations-largest-impact-on-realism-first).
 - Road widths are class estimates, so some pavements are narrower than real.
 - Hand tracking without controllers isn't specifically supported.

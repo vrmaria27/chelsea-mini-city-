@@ -1,7 +1,7 @@
 // Fetches everything OpenStreetMap holds for a small local area (trees, paving, fountains, benches,
 // (Run by .github/workflows/import-doy.yml on the osm-doy branch for the --area doy extracts.)
 // barriers, planters, lamps; or, with --buildings, every building, part and shop node).
-// Usage: node scripts/osm/fetch-square.mjs [--area square|doy] [--buildings] [--out file.json]
+// Usage: node scripts/osm/fetch-square.mjs [--area square|doy|kr] [--buildings] [--out file.json]
 // Data © OpenStreetMap contributors, available under the Open Database License (ODbL 1.0).
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -9,9 +9,11 @@ import { dirname } from 'node:path';
 export const SQUARE_BBOX = { south: 51.4914, west: -0.1600, north: 51.4936, east: -0.1552 };
 /** Duke of York Square, the Saatchi Gallery (Duke of York's HQ) and their lawns, to King's Road. */
 export const DOY_BBOX = { south: 51.4893, west: -0.1614, north: 51.4920, east: -0.1572 };
+/** King's Road from Sloane Square to the Markham Square junction (both frontages and corner returns). */
+export const KR_BBOX = { south: 51.4886, west: -0.1650, north: 51.4924, east: -0.1585 };
 const arg = (k) => (process.argv.includes(k) ? process.argv[process.argv.indexOf(k) + 1] : null);
 const area = arg('--area') ?? 'square';
-const BBOX = area === 'doy' ? DOY_BBOX : SQUARE_BBOX;
+const BBOX = area === 'doy' ? DOY_BBOX : area === 'kr' ? KR_BBOX : SQUARE_BBOX;
 const out = arg('--out') ?? 'data/osm/square-raw.json';
 const { south, west, north, east } = BBOX;
 // --buildings: every building, building part and shop/amenity node around the square, with full member
@@ -60,7 +62,21 @@ const squareQuery = `[out:json][timeout:120][bbox:${south},${west},${north},${ea
   nwr["building:part"];
 );
 out geom tags meta;`;
-const query = buildingsMode ? buildingQuery : squareQuery;
+// King's Road: a lighter detail query (street furniture and trees along the road, not every area tag)
+const krQuery = `[out:json][timeout:180][bbox:${south},${west},${north},${east}];
+(
+  node["natural"="tree"];
+  node["highway"~"street_lamp|crossing|traffic_signals|bus_stop"];
+  node["barrier"];
+  node["amenity"~"post_box|bench|bicycle_parking|telephone|waste_basket|bicycle_rental"];
+  way["highway"~"footway|pedestrian|primary|secondary|tertiary|residential|service"];
+  way["barrier"];
+  way["leisure"~"garden|park"];
+  way["landuse"="grass"];
+  way["area:highway"];
+);
+out geom tags meta;`;
+const query = buildingsMode ? buildingQuery : area === 'kr' ? krQuery : squareQuery;
 const endpoints = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
