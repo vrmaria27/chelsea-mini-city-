@@ -8,7 +8,7 @@ import { UPPER_TOP, buildPeterJones, peterJonesDecals, type LandmarkModelData } 
 import { SQUARE_Y, buildSloaneSquare, buildSquareNature, type SquareData } from './landmarks/sloaneSquare';
 import { buildSquareBuildings, squareSignDecal, type RoofInsets, type SignQuad } from './landmarks/squareBuildings';
 import { DOY_PLAZA_IDS, addDoyNature, buildDukeOfYorkSquare, type DoyData } from './landmarks/dukeOfYorkSquare';
-import { buildKrFurniture, buildKrStreet, krNearest, useKingsRoadLine, type KrData } from './landmarks/kingsRoad';
+import { buildKrFurniture, buildKrStreet, krNearest, useCorridorLine, useKingsRoadLine, withCorridorLine, type KrData } from './landmarks/kingsRoad';
 import { addKrNature } from './landmarks/kingsRoadNature';
 
 export interface OsmRoad { id: number; name: string | null; hw: string; cls: 'main' | 'street' | 'service' | 'pedestrian' | 'path'; w: number; pts: number[]; sidewalk?: boolean; /** Per-vertex widths (King's Road, fitted between the building lines). */ wv?: number[] }
@@ -31,9 +31,14 @@ interface OsmData {
   squareRoofs: Record<string, RoofInsets>;
   doy: DoyData | null;
   kr: KrData | null;
+  /** Sloane Street and Lower Sloane Street corridors (same shape as King's Road). */
+  corridors?: (KrData & { id: string; name: string })[];
 }
 
 export const OSM = data as unknown as OsmData;
+// corridor centrelines for the frontage builders (King's Road also set in buildStatic)
+if (OSM.kr) useKingsRoadLine(OSM.kr.line);
+for (const c of OSM.corridors ?? []) useCorridorLine(c.id, c.line);
 const HALF = OSM.meta.half;
 const MARGIN = 16; // plinth margin around the map (metres)
 const TITLE_MARGIN = 44; // extra plinth on the south (near) side for the title and attribution
@@ -208,6 +213,10 @@ export function beyondKrEnd(x: number, z: number, kr: KrData): boolean {
   const q = krNearest(x, z);
   return q.s > kr.sEnd + 2 && q.d < 60;
 }
+/** Every rebuilt street corridor: King's Road, then Sloane Street and Lower Sloane Street. */
+const allCorridors = (): (KrData & { id: string })[] => [...(OSM.kr ? [{ ...OSM.kr, id: 'kr' }] : []), ...(OSM.corridors ?? [])];
+/** Nearest point on a corridor's centreline. */
+const corNear = (c: { id: string }, x: number, z: number) => withCorridorLine(c.id, () => krNearest(x, z));
 /** Triangle counts of the Duke of York Square layers (for checks and docs). */
 export let doyStats: Record<string, number> = {};
 const doyPlaza = () => OSM.areas.filter((a) => DOY_PLAZA_IDS.includes(a.id)).map((a) => ({ ring: a.ring, tris: a.tris }));
@@ -242,13 +251,17 @@ function buildStatic(): MeshBuilder {
   const centre = (bl: OsmBuilding) => { const r = bl.rings[0]; let x = 0, z = 0; for (let i = 0; i < r.length; i += 2) { x += r[i]; z += r[i + 1]; } return [x / (r.length / 2), z / (r.length / 2)]; };
   const kr = OSM.kr;
   if (kr) useKingsRoadLine(kr.line);
-  const near = OSM.buildings.filter((bl) => { const [x, z] = centre(bl); return Math.hypot(x - cx, z - cz) < DETAIL_RADIUS + 60 || (!!kr && krNearest(x, z).d < 100); });
+  const cors = allCorridors();
+  for (const c of cors) useCorridorLine(c.id, c.line);
+  const near = OSM.buildings.filter((bl) => { const [x, z] = centre(bl); return Math.hypot(x - cx, z - cz) < DETAIL_RADIUS + 60 || cors.some((c) => corNear(c, x, z).d < 100); });
   const isParty = (x: number, z: number) => near.some((o) => pointInRing(x, z, o.rings[0]));
   for (const bl of OSM.buildings) {
     const [x, z] = centre(bl);
     // window rows near Sloane Square and in the background of the King's Road corridor (side-street returns)
-    const nearKr = !!kr && (() => { const q = krNearest(x, z); return q.d < 60 && q.s >= kr.sStart && q.s <= kr.sEnd; })();
-    extrude(b, bl, !!bl.custom, (!!sq && Math.hypot(x - cx, z - cz) < DETAIL_RADIUS) || nearKr, isParty, !!kr && beyondKrEnd(x, z, kr));
+    const nearKr = cors.some((c) => { const q = corNear(c, x, z); return q.d < 60 && q.s >= c.sStart && q.s <= c.sEnd; });
+    // beyond the end of a reconstructed street (and not beside another): plain pale massing
+    const beyond = !nearKr && cors.some((c) => { const q = corNear(c, x, z); return q.s > c.sEnd + 2 && q.d < 60; });
+    extrude(b, bl, !!bl.custom, (!!sq && Math.hypot(x - cx, z - cz) < DETAIL_RADIUS) || nearKr, isParty, beyond);
   }
   for (const lm of OSM.landmarkModels) if (lm.model === 'peter-jones') buildPeterJones(b, lm);
   if (OSM.square) buildSloaneSquare(b, OSM.square);
@@ -261,11 +274,15 @@ function buildStatic(): MeshBuilder {
     doyStats = r.stats;
   }
   // King's Road: pavement and kerbs along both sides, street furniture from OSM
-  if (kr) {
+  if (cors.length) {
     const inB = (x: number, z: number) => OSM.buildings.some((bl) => { const r = bl.rings[0]; return x > -HALF && pointInRing(x, z, r); });
-    const st = buildKrStreet(b, kr, OSM.roads, inB);
-    const fu = buildKrFurniture(b, kr, squareSigns);
-    krStats = { pavement: st.tris, furniture: fu.tris };
+    krStats = {};
+    for (const c of cors) {
+      const st = buildKrStreet(b, c, OSM.roads, inB);
+      const fu = withCorridorLine(c.id, () => buildKrFurniture(b, c, squareSigns));
+      krStats[`${c.id}.pavement`] = st.tris; krStats[`${c.id}.furniture`] = fu.tris;
+    }
+    krStats.pavement = krStats['kr.pavement'] ?? 0; krStats.furniture = krStats['kr.furniture'] ?? 0;
   }
   // Decorative trees inside green spaces (positions are not sourced; deterministic scatter)
   const rand = rng(51491);
@@ -332,7 +349,7 @@ export const osmMap: SceneMap = {
   notes:
     `Streets, public spaces, building footprints and landmark positions come from OpenStreetMap (retrieved ${OSM.meta.retrieved.slice(0, 10)}). ` +
     'Road widths without a width tag, building heights without height/levels tags, façade colours and trees outside Sloane Square are stylised estimates.',
-  nature: OSM.square ? () => buildSquareNature(OSM.square!, (n) => (OSM.doy ? addDoyNature(OSM.doy, doyPlaza(), n) : 0) + (OSM.kr ? addKrNature(OSM.kr, n) : 0)) : undefined,
+  nature: OSM.square ? () => buildSquareNature(OSM.square!, (n) => (OSM.doy ? addDoyNature(OSM.doy, doyPlaza(), n) : 0) + allCorridors().reduce((m, c) => m + withCorridorLine(c.id, () => addKrNature(c, n)), 0)) : undefined,
   decals: () => {
     const out = OSM.landmarkModels.filter((m) => m.model === 'peter-jones').flatMap((m) => peterJonesDecals(m));
     const sq = squareSignDecal(squareSigns);

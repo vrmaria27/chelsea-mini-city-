@@ -112,6 +112,30 @@ export const LANDMARKS: readonly Landmark[] = [
     sources: [{ title: '138A King’s Road (Historic England 1225025)', url: 'https://historicengland.org.uk/listing/the-list/list-entry/1225025' }, { title: 'Markham Arms, Chelsea (Wikipedia)', url: 'https://en.wikipedia.org/wiki/Markham_Arms,_Chelsea' }],
   },
   {
+    id: 'sloane-street#square', name: 'Sloane Street',
+    description: 'Looking north up Sloane Street from Sloane Square: Nos 139–140 and the stucco shopfront of Nos 136–138 on the left, Holy Trinity and Nos 147–149 on the right. The street is reconstructed as far as Cadogan Gardens and Ellis Street.',
+    x: 133.6, z: -236.8, pinY: 14, street: { x: 139.3, z: -207.3, yaw: 0.19 }, pitch: 0.06,
+    sources: [{ title: 'OpenStreetMap (Sloane Street footprints and addresses)', url: 'https://www.openstreetmap.org/#map=18/51.4934/-0.1580' }],
+  },
+  {
+    id: 'sloane-street#wilbraham-place', name: 'Sloane Street at Wilbraham Place',
+    description: 'Across Sloane Street to George House (Nos 127–135), a late-20th-century block with terracotta-coloured piers, from the east pavement by the red-brick mansion blocks of Nos 150–161.',
+    x: 127.5, z: -296, pinY: 14, street: { x: 141.5, z: -281.8, yaw: 0.778 }, pitch: 0.1,
+    sources: [{ title: 'OpenStreetMap (Sloane Street footprints and addresses)', url: 'https://www.openstreetmap.org/#map=18/51.4938/-0.1581' }],
+  },
+  {
+    id: 'lower-sloane-street#square', name: 'Lower Sloane Street',
+    description: 'Looking south down the west side of Lower Sloane Street: red-brick Queen Anne houses with shaped gables, canted bays and porches; across the road, the Sloane Gardens communal garden.',
+    x: 169.5, z: -60, pinY: 14, street: { x: 165.1, z: -89.7, yaw: -2.994 }, pitch: 0.06,
+    sources: [{ title: 'OpenStreetMap (Lower Sloane Street footprints and addresses)', url: 'https://www.openstreetmap.org/#map=18/51.4912/-0.1572' }],
+  },
+  {
+    id: 'lower-sloane-street#turks-row', name: 'Lower Sloane Street at Turks Row',
+    description: 'Gwynn House (No. 94, with the Rose & Crown on its corner) and the Sloane Court East mansion blocks, looking south towards the end of the street at Pimlico Road.',
+    x: 221.6, z: 123.4, pinY: 14, street: { x: 219.6, z: 98.5, yaw: -3.062 }, pitch: 0.1,
+    sources: [{ title: 'OpenStreetMap (Lower Sloane Street footprints and addresses)', url: 'https://www.openstreetmap.org/#map=18/51.4900/-0.1567' }],
+  },
+  {
     id: 'way/630720415', name: 'Royal Avenue',
     description: 'Gravel avenue between King’s Road and Burton Court, part of a scheme by Sir Christopher Wren, approved in 1681, to link the Royal Hospital with Kensington Palace.',
     x: -108.8, z: 197.7, pinY: 10, street: null,

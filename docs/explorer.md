@@ -83,7 +83,8 @@ its kerb (the façades all round it, the station forecourt and the south end of 
 Duke of York Square, the Saatchi Gallery forecourt inside the curved wall, and 5 m round them; see
 [duke-of-york-square.md](duke-of-york-square.md#4-navigation-and-viewpoints). A third zone covers both pavements of King's Road
 from Sloane Square to the Markham Square junction, with an end-of-area message at its western end; see
-[kings-road.md](kings-road.md#6-navigation-and-the-boundary). Within a zone a point
+[kings-road.md](kings-road.md#6-navigation-and-the-boundary). Sloane Street and Lower Sloane Street have zones of the same kind; see
+[sloane-streets.md](sloane-streets.md#7-navigation-and-boundaries). Within a zone a point
 is walkable if it is one of these:
 - the paved square;
 - a mapped plaza;
@@ -103,7 +104,7 @@ footprint, the view dims.
 
 ## Discovery
 
-The places menu (`src/explore/landmarks.ts`) lists the 18 landmarks in the scene, each with its verified name, a short
+The places menu (`src/explore/landmarks.ts`) lists the 22 landmarks in the scene, each with its verified name, a short
 statement and its sources:
 - **Seven are in the street-level area.** Selecting one moves you to a tested viewpoint after a brief fade (no flight
   through buildings). Each viewpoint is walkable, has room around it, has a clear line of sight to the landmark and has

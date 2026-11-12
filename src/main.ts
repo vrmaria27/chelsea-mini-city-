@@ -213,7 +213,7 @@ function renderHud(): void {
       ? `<p class="help"><b>Walk</b> with W A S D or the arrow keys · <b>look</b> by dragging (or “Look with the mouse”) · <b>click</b> the pavement to step there · <b>M</b> returns to the miniature.</p>`
       : `<p class="help"><b>1</b> Drag to turn the model, scroll to zoom. <b>2</b> Click the pavement or the square to choose a spot (or pick a place). <b>3</b> Go to street level and look around.</p>`;
   }
-  if (!street) html += `<div class="actions"><button class="primary" data-action="toStreet">Go to street level${l?.street || !l ? '' : ' here'}</button><span class="help">${l && !l.street ? `${esc(l.name)} is outside the street-level area; you will stand at your chosen spot.` : 'Street level covers Sloane Square, Duke of York Square and King\'s Road as far as Markham Square.'}</span></div>`;
+  if (!street) html += `<div class="actions"><button class="primary" data-action="toStreet">Go to street level${l?.street || !l ? '' : ' here'}</button><span class="help">${l && !l.street ? `${esc(l.name)} is outside the street-level area; you will stand at your chosen spot.` : 'Street level covers Sloane Square, Duke of York Square, King\'s Road as far as Markham Square, Sloane Street and Lower Sloane Street.'}</span></div>`;
   $('info').innerHTML = html;
   syncPanel();
 }
@@ -237,7 +237,7 @@ function showAbout(): void {
     <p>Map data <a href="${esc(meta.copyrightUrl)}" target="_blank" rel="noopener">© OpenStreetMap contributors</a>,
       available under the Open Database License (ODbL 1.0). Extract retrieved ${esc(meta.retrieved.slice(0, 10))}.</p>
     <p><b>From OpenStreetMap:</b> street centrelines and names, pavements and squares, building footprints, most building heights (from storey counts), the trees, benches and lamps in Sloane Square, and landmark positions.</p>
-    <p><b>Approximations:</b> the buildings around Sloane Square, Peter Jones, the Saatchi Gallery, the buildings around Duke of York Square and both sides of King's Road as far as Markham Square are hand-built procedural models based on photographs and published descriptions; their windows, ornament, roofs and colours are simplified.
+    <p><b>Approximations:</b> the buildings around Sloane Square, Peter Jones, the Saatchi Gallery, the buildings around Duke of York Square and both sides of King's Road as far as Markham Square, Sloane Street and Lower Sloane Street are hand-built procedural models based on photographs and published descriptions; their windows, ornament, roofs and colours are simplified.
       Elsewhere buildings are plain masses with flat roofs at their mapped height (${restored} of them, previously cleared for an earlier game, are shown the same way). Road widths without a mapped width, façade colours and the trees outside Sloane Square are estimates.</p>
     <p><b>Place descriptions</b> are short statements from the sources listed with each place (Historic England, Wikipedia, the Royal Borough of Kensington and Chelsea and others).</p>
     <p class="sub"><b>Earlier city-builder save.</b> ${esc(legacy.description)}
@@ -736,7 +736,7 @@ function syncPanel(): void {
   }
   if (vrAbout) {
     title = 'About';
-    body = `Map data © OpenStreetMap contributors (ODbL). An approximate reconstruction: buildings around Sloane Square and Duke of York Square and along King's Road to Markham Square are simplified procedural models; others are plain masses at their mapped height.`;
+    body = `Map data © OpenStreetMap contributors (ODbL). An approximate reconstruction: buildings around Sloane Square and Duke of York Square and along King's Road, Sloane Street and Lower Sloane Street are simplified procedural models; others are plain masses at their mapped height.`;
     warn = false;
   }
   scene.panel.set({

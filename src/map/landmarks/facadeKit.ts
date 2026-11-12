@@ -89,8 +89,9 @@ export function edgesOf(ring: number[]): Front[] {
 }
 
 /** Merge consecutive nearly collinear edges (within maxTurn radians) into longer fronts. */
-export function mergeFronts(fs: Front[], maxTurn = 0.12): Front[] {
+export function mergeFronts(fs: Front[], maxTurn = 0.12, maxDev = Infinity): Front[] {
   const out: Front[] = [];
+  const verts: Pt[][] = []; // the original corner points inside each merged front
   for (const f of fs) {
     const last = out[out.length - 1];
     const dot = last ? last.n[0] * f.n[0] + last.n[1] * f.n[1] : 0;
@@ -98,8 +99,12 @@ export function mergeFronts(fs: Front[], maxTurn = 0.12): Front[] {
       const b = f.b, a = last.a;
       const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
       const t: Pt = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
-      out[out.length - 1] = { a, b, len, t, n: [-t[1], t[0]] };
-    } else out.push({ ...f });
+      // a curved run of edges is not one flat front: keep every corner within maxDev of the chord
+      const inner = [...verts[verts.length - 1], f.a];
+      const dev = Math.max(...inner.map((p) => Math.abs((p[0] - a[0]) * t[1] - (p[1] - a[1]) * t[0])));
+      if (dev <= maxDev) { out[out.length - 1] = { a, b, len, t, n: [-t[1], t[0]] }; verts[verts.length - 1] = inner; continue; }
+    }
+    out.push({ ...f }); verts.push([]);
   }
   return out;
 }
