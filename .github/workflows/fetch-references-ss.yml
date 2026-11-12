@@ -1,0 +1,27 @@
+# Downloads openly licensed (Wikimedia Commons) reference photos of Sloane Street and Lower Sloane Street
+# into references/ss. Runs only on the 'references-ss' branch; never deployed.
+name: Fetch Sloane Street reference photos
+on:
+  workflow_dispatch:
+  push:
+    branches: [references-ss]
+    paths: [scripts/refs/fetch-commons-ss.mjs, .github/workflows/fetch-references-ss.yml]
+permissions:
+  contents: write
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/refs/fetch-commons-ss.mjs references/ss
+      - name: Commit references
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add references
+          git diff --cached --quiet && echo "No change" && exit 0
+          git commit -m "Reference photos from Wikimedia Commons (see references/ss/index.json for authors and licences)"
+          git push
