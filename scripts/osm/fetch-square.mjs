@@ -13,9 +13,11 @@ export const DOY_BBOX = { south: 51.4893, west: -0.1614, north: 51.4920, east: -
 export const KR_BBOX = { south: 51.4886, west: -0.1650, north: 51.4924, east: -0.1585 };
 /** Sloane Street (Sloane Square to the map's north edge) and Lower Sloane Street (to Pimlico Road). */
 export const SS_BBOX = { south: 51.4890, west: -0.1592, north: 51.4946, east: -0.1550 };
+/** The whole map (side streets between the reconstructed areas). */
+export const ALL_BBOX = { south: 51.48805, west: -0.16506, north: 51.49435, east: -0.15494 };
 const arg = (k) => (process.argv.includes(k) ? process.argv[process.argv.indexOf(k) + 1] : null);
 const area = arg('--area') ?? 'square';
-const BBOX = area === 'doy' ? DOY_BBOX : area === 'kr' ? KR_BBOX : area === 'ss' ? SS_BBOX : SQUARE_BBOX;
+const BBOX = area === 'doy' ? DOY_BBOX : area === 'kr' ? KR_BBOX : area === 'ss' ? SS_BBOX : area === 'all' ? ALL_BBOX : SQUARE_BBOX;
 const out = arg('--out') ?? 'data/osm/square-raw.json';
 const { south, west, north, east } = BBOX;
 // --buildings: every building, building part and shop/amenity node around the square, with full member
@@ -78,7 +80,7 @@ const krQuery = `[out:json][timeout:180][bbox:${south},${west},${north},${east}]
   way["area:highway"];
 );
 out geom tags meta;`;
-const query = buildingsMode ? buildingQuery : area === 'kr' || area === 'ss' ? krQuery : squareQuery;
+const query = buildingsMode ? buildingQuery : area === 'kr' || area === 'ss' || area === 'all' ? krQuery : squareQuery;
 const endpoints = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',

@@ -1,0 +1,27 @@
+# Downloads openly licensed (Wikimedia Commons) reference photos of the connecting side streets
+# into references/sd. Runs only on the 'references-sd' branch; never deployed.
+name: Fetch side-street reference photos
+on:
+  workflow_dispatch:
+  push:
+    branches: [references-sd]
+    paths: [scripts/refs/fetch-commons-sd.mjs, scripts/refs/sd-points.json, .github/workflows/fetch-references-sd.yml]
+permissions:
+  contents: write
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/refs/fetch-commons-sd.mjs references/sd
+      - name: Commit references
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add references
+          git diff --cached --quiet && echo "No change" && exit 0
+          git commit -m "Reference photos from Wikimedia Commons (see references/sd/index.json for authors and licences)"
+          git push
