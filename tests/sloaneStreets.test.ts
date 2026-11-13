@@ -18,7 +18,7 @@ class MemoryStore implements KeyValueStore {
 }
 
 type Cor = KrData & { id: string; name: string; frontages: { id: string; s: number; d: number }[] };
-const cors = (OSM as unknown as { corridors: Cor[] }).corridors;
+const cors = (OSM as unknown as { corridors: Cor[] }).corridors.filter((c) => c.id === 'ss' || c.id === 'ls');
 const nav = new NavField(OSM as unknown as NavData);
 const roofs = (OSM as unknown as { squareRoofs: Record<string, never> }).squareRoofs;
 

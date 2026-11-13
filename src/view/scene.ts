@@ -12,6 +12,10 @@ import { ExplorePanel } from './panel';
 /** Depth of the wooden plinth below street level (map metres) in the miniature. */
 const PLINTH_DEPTH = 16;
 const TILES = 6; // static mesh is split into TILES × TILES chunks for frustum culling
+/** Corridor buildings: finer tiles, full model within LOD_NEAR map metres of the eye, simple mass beyond. */
+const LOD_TILES = 10;
+const LOD_NEAR = 90;
+const LOD_NEAR_LOW = 55; // with Low detail on
 
 export interface MiniatureView {
   anchor: { x: number; y: number; z: number; yaw: number };
@@ -55,6 +59,9 @@ export class ExplorerScene {
   showPanel = false;
 
   private tiles: Tile[] = [];
+  private lodTiles: { detail: Tile | null; simple: Tile | null; min: Vec3; max: Vec3 }[] = [];
+  /** Corridor tiles drawn at full detail in the last frame (for measurements). */
+  detailTiles = 0;
   private plinthMesh: Mesh;
   private labelMesh: Mesh;
   private minorLabelMesh: Mesh;
@@ -63,6 +70,8 @@ export class ExplorerScene {
   private nature: { branches: Mesh; core: Mesh; cards: Mesh; lowB: Mesh; lowF: Mesh; water: Mesh; leaf: WebGLTexture } | null = null;
   natureStats: Record<string, number> | null = null;
   readonly staticTriangles: number;
+  /** Corridor models: triangles in the full and the simplified versions. */
+  lodTriangles = { detail: 0, simple: 0 };
   private tableMesh: Mesh;
   private floorMesh: Mesh;
   private rayMesh: Mesh;
@@ -103,6 +112,19 @@ export class ExplorerScene {
     const data = map.buildStatic().toFloat32();
     this.staticTriangles = data.length / 27;
     this.tiles = splitTiles(data, map.half, TILES).map((t) => ({ mesh: r.litMesh(t.data), min: t.min, max: t.max }));
+    const lod = map.buildLod?.();
+    if (lod) {
+      const dd = lod.detail.toFloat32(), sd = lod.simple.toFloat32();
+      this.lodTriangles = { detail: dd.length / 27, simple: sd.length / 27 };
+      const dt = splitTiles(dd, map.half, LOD_TILES, true), st = splitTiles(sd, map.half, LOD_TILES, true);
+      const mk = (t: { data: Float32Array; min: Vec3; max: Vec3 }) => (t.data.length ? { mesh: r.litMesh(t.data), min: t.min, max: t.max } : null);
+      this.lodTiles = dt.map((t, i) => {
+        const a = mk(t), b = mk(st[i]);
+        const min: Vec3 = [Math.min(t.min[0], st[i].min[0]), Math.min(t.min[1], st[i].min[1]), Math.min(t.min[2], st[i].min[2])];
+        const max: Vec3 = [Math.max(t.max[0], st[i].max[0]), Math.max(t.max[1], st[i].max[1]), Math.max(t.max[2], st[i].max[2])];
+        return { detail: a, simple: b, min, max };
+      }).filter((t) => t.detail || t.simple);
+    }
     this.plinthMesh = r.litMesh(map.buildPlinth().toFloat32());
     const defs = map.labels();
     const { canvas: lc, entries } = buildAtlas(defs.map((d) => ({ text: d.text, color: d.color, outline: d.outline, bold: d.bold })));
@@ -237,6 +259,22 @@ export class ExplorerScene {
       drawn++;
     }
     this.drawnTiles = drawn;
+    // corridor buildings: full models near the eye (street level, close miniature views), simple masses beyond
+    if (this.lodTiles.length) {
+      this.worldToMap(eye, this.v3);
+      const near = this.lowDetail ? LOD_NEAR_LOW : LOD_NEAR;
+      let dn = 0;
+      for (const t of this.lodTiles) {
+        if (!boxVisible(this.frustum, t.min, t.max)) continue;
+        const dx = Math.max(t.min[0] - this.v3[0], 0, this.v3[0] - t.max[0]), dz = Math.max(t.min[2] - this.v3[2], 0, this.v3[2] - t.max[2]);
+        const d = Math.hypot(dx, dz, Math.max(0, this.v3[1] - t.max[1]));
+        const use = d < near && t.detail ? t.detail : t.simple ?? t.detail;
+        if (!use) continue;
+        if (use === t.detail) dn++;
+        r.drawLit(use.mesh, this.modelM);
+      }
+      this.detailTiles = dn;
+    }
     for (const d of this.decals) r.drawTex(d.mesh, this.modelM, d.tex);
     if (this.nature) {
       const n = this.nature, time = opts.time % 3600, sway = this.reducedMotion ? 0 : 1;
@@ -322,7 +360,7 @@ function ringMesh(r0: number, r1: number, n: number, col: RGB): MeshBuilder {
 }
 
 /** Splits an interleaved triangle list (9 floats per vertex) into a grid of tiles by centroid. */
-export function splitTiles(data: Float32Array, half: number, n: number): { data: Float32Array; min: Vec3; max: Vec3 }[] {
+export function splitTiles(data: Float32Array, half: number, n: number, keepEmpty = false): { data: Float32Array; min: Vec3; max: Vec3 }[] {
   const F = 27;
   const tris = data.length / F;
   const idx = new Uint16Array(tris);
@@ -347,7 +385,7 @@ export function splitTiles(data: Float32Array, half: number, n: number): { data:
       if (x > tile.max[a]) tile.max[a] = x;
     }
   }
-  return out.filter((t) => t.k > 0).map(({ data, min, max }) => ({ data, min, max }));
+  return out.filter((t) => keepEmpty || t.k > 0).map(({ data, min, max }) => ({ data, min, max }));
 }
 
 /** Six clip planes (a, b, c, d) of a model-view-projection matrix (column-major). */

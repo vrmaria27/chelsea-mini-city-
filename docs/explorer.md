@@ -84,7 +84,8 @@ Duke of York Square, the Saatchi Gallery forecourt inside the curved wall, and 5
 [duke-of-york-square.md](duke-of-york-square.md#4-navigation-and-viewpoints). A third zone covers both pavements of King's Road
 from Sloane Square to the Markham Square junction, with an end-of-area message at its western end; see
 [kings-road.md](kings-road.md#6-navigation-and-the-boundary). Sloane Street and Lower Sloane Street have zones of the same kind; see
-[sloane-streets.md](sloane-streets.md#7-navigation-and-boundaries). Within a zone a point
+[sloane-streets.md](sloane-streets.md#7-navigation-and-boundaries). Each connecting side street has its own narrower zone. Some side streets are shared surfaces walked on the carriageway, and Royal Avenue's gravel is walkable. A side street that ends at the map edge shows its own end-of-area message; see
+[side-streets.md](side-streets.md#2-how-the-streets-are-built). Within a zone a point
 is walkable if it is one of these:
 - the paved square;
 - a mapped plaza;

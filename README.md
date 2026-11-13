@@ -227,6 +227,19 @@ Holy Trinity and the square's models are unchanged. Both carriageways are re-cen
 
 Endpoints, sources, the coverage tables, frontages awaiting references, performance and a headset checklist are in [docs/sloane-streets.md](docs/sloane-streets.md).
 
+### Side streets
+
+The streets connecting the reconstructed areas are now built and walkable, from each junction to the map edge or to the next reconstructed street. There are 32 of them, with 184 street-facing buildings:
+- **Around Peter Jones:** Symons Street, Pavilion Road, Cadogan Gardens and Culford Gardens.
+- **King's Road side streets:** Royal Avenue (a gravel avenue), Cheltenham Terrace, Franklin's Row, Turks Row, Walpole Street, the Duke of York Square lane, Blacklands Terrace, Lincoln, Anderson, Tryon, Bywater and Smith Streets.
+- **Around the station and Lower Sloane Street:** Holbein Place and Holbein Mews, Sloane Gardens, Bourne Street, Sedding Street, Sloane Terrace (Cadogan Hall), Wilbraham Place, Sloane Court and Graham Terrace.
+
+Each building's configuration combines three sources: the street's photographed character, the building's own OSM storeys, materials and shops, and per-building overrides where a photograph shows it. Corridor buildings are now drawn at two levels of detail.
+
+![Side streets added, by priority](docs/sd-overview.png)
+
+The coverage table, endpoints, remaining gaps, performance and a headset checklist are in [docs/side-streets.md](docs/side-streets.md).
+
 ## Install, run, build
 
 Requires **Node.js 20+**.

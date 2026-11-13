@@ -6,13 +6,14 @@ import { MeshBuilder, hex, rng, shade, type RGB } from '../engine/geometry';
 import { P, tree } from './palette';
 import { UPPER_TOP, buildPeterJones, peterJonesDecals, type LandmarkModelData } from './landmarks/peterJones';
 import { SQUARE_Y, buildSloaneSquare, buildSquareNature, type SquareData } from './landmarks/sloaneSquare';
-import { buildSquareBuildings, squareSignDecal, type RoofInsets, type SignQuad } from './landmarks/squareBuildings';
+import { buildSquareBuildings, corridorSpec, isCorridorModel, squareSignDecal, type RoofInsets, type SignQuad } from './landmarks/squareBuildings';
+import { M as KR_M, KR_PAVE as CORRIDOR_PAVE } from './landmarks/kingsRoad';
 import { DOY_PLAZA_IDS, addDoyNature, buildDukeOfYorkSquare, type DoyData } from './landmarks/dukeOfYorkSquare';
 import { buildKrFurniture, buildKrStreet, krNearest, useCorridorLine, useKingsRoadLine, withCorridorLine, type KrData } from './landmarks/kingsRoad';
 import { addKrNature } from './landmarks/kingsRoadNature';
 
 export interface OsmRoad { id: number; name: string | null; hw: string; cls: 'main' | 'street' | 'service' | 'pedestrian' | 'path'; w: number; pts: number[]; sidewalk?: boolean; /** Per-vertex widths (King's Road, fitted between the building lines). */ wv?: number[] }
-export interface OsmArea { id: string; kind: 'green' | 'plaza' | 'carriageway' | 'parking'; name: string | null; ring: number[]; tris: number[] }
+export interface OsmArea { id: string; kind: 'green' | 'plaza' | 'carriageway' | 'parking'; surface?: 'gravel'; name: string | null; ring: number[]; tris: number[] }
 export interface OsmBuilding {
   id: string; h: number; hSrc: string; type: string; name: string | null; protected: boolean; rings: number[][]; tris: number[];
   custom?: string; landmarkId?: string;
@@ -48,6 +49,7 @@ export const Y = { ground: 0, parking: 0.1, carriageway: 0.12, green: 0.15, plaz
 const ROAD_COL: Record<OsmRoad['cls'], RGB> = {
   main: hex('#858991'), street: hex('#979ba2'), service: hex('#b2aea5'), pedestrian: hex('#e6d9bd'), path: hex('#d6c7a6'),
 };
+const GRAVEL = hex('#c9b99a');
 const AREA_COL: Record<OsmArea['kind'], RGB> = { green: hex('#a3c283'), plaza: hex('#ece2cf'), carriageway: hex('#979ba2'), parking: hex('#c6c1b6') };
 const BRICKS = ['#a9563f', '#b5664a', '#9b4c3a', '#b9775a', '#94604a'].map(hex);
 const CREAMS = ['#f0e7d4', '#e9ddc5', '#f4ecdc', '#e6dccb'].map(hex);
@@ -124,10 +126,10 @@ const MASSING = hex('#dcd6cb');
  * floor for shops and a pale cornice line so they do not read as blank boxes at eye level. Window
  * positions are generic (one per 3.4 m bay and 3.2 m storey), not surveyed.
  */
-function extrude(b: MeshBuilder, bl: OsmBuilding, hidden: boolean, detail = false, isParty?: (x: number, z: number) => boolean, muted = false): void {
+function extrude(b: MeshBuilder, bl: OsmBuilding, hidden: boolean, detail = false, isParty?: (x: number, z: number) => boolean, muted = false, colour?: RGB): void {
   if (hidden) return;
   // beyond the end of the King's Road reconstruction: a plain pale massing model (not a reconstruction)
-  const wall = muted ? MASSING : wallColour(bl);
+  const wall = muted ? MASSING : colour ?? wallColour(bl);
   if (muted) detail = false;
   const roof = muted ? shade(MASSING, 0.9) : shade(ROOF[hash(bl.id) % ROOF.length], 1);
   const cornice = shade(wall, 1.22);
@@ -204,6 +206,7 @@ function northArrow(b: MeshBuilder, x: number, z: number, y: number): void {
 }
 
 let squareSigns: SignQuad[] = [];
+let lodDetail = new MeshBuilder(), lodSimple = new MeshBuilder();
 /** Green areas that get no decorative scatter trees (the Duke of York's HQ playing field is open grass). */
 const NO_SCATTER = new Set(['w1368124984']);
 /** Triangle counts of the King's Road street layers (for checks and docs). */
@@ -240,7 +243,7 @@ function buildStatic(): MeshBuilder {
   const H = HALF;
   // Pavement-coloured ground (the plinth below it is drawn separately)
   b.box(-H, -1.5, -H, H, Y.ground, H, P.pavement);
-  for (const a of OSM.areas) flatTris(b, a.tris, Y[a.kind], AREA_COL[a.kind]);
+  for (const a of OSM.areas) flatTris(b, a.tris, Y[a.kind], a.surface === 'gravel' ? GRAVEL : AREA_COL[a.kind]);
   // Roads: wider classes on top
   const order: OsmRoad['cls'][] = ['path', 'pedestrian', 'service', 'street', 'main'];
   for (const cls of order) for (const r of OSM.roads) if (r.cls === cls) ribbon(b, r.pts, r.w, Y[cls], ROAD_COL[cls], r.wv);
@@ -266,7 +269,21 @@ function buildStatic(): MeshBuilder {
   for (const lm of OSM.landmarkModels) if (lm.model === 'peter-jones') buildPeterJones(b, lm);
   if (OSM.square) buildSloaneSquare(b, OSM.square);
   // Sloane Square perimeter: individual reconstructions replace the generic extrusions of their footprints
-  if (OSM.square) squareSigns = buildSquareBuildings(b, OSM.buildings, OSM.squareRoofs ?? {}, OSM.square.ring).signs;
+  // corridor models are built separately at two levels of detail (buildLod)
+  if (OSM.square) squareSigns = buildSquareBuildings(b, OSM.buildings.filter((x) => !isCorridorModel(x.custom)), OSM.squareRoofs ?? {}, OSM.square.ring, OSM.buildings).signs;
+  if (OSM.square) {
+    lodDetail = new MeshBuilder();
+    lodSimple = new MeshBuilder();
+    const cb = OSM.buildings.filter((x) => isCorridorModel(x.custom));
+    squareSigns = squareSigns.concat(buildSquareBuildings(lodDetail, cb, OSM.squareRoofs ?? {}, OSM.square.ring, OSM.buildings).signs);
+    // far version: the footprint extruded to the modelled height in its main wall colour, with window rows
+    for (const bl of cb) {
+      const spec = corridorSpec(bl.custom!);
+      if (!spec) continue;
+      const h = CORRIDOR_PAVE + spec.floors.reduce((a, f) => a + f, 0) + (spec.top.h ?? 0.5);
+      extrude(lodSimple, { ...bl, h }, false, true, isParty, false, KR_M[spec.wall]);
+    }
+  }
   // Duke of York Square and the gallery forecourt (the gallery and its neighbours are built above)
   if (OSM.doy) {
     const r = buildDukeOfYorkSquare(b, OSM.doy, doyPlaza(), OSM.buildings.find((x) => x.id === 'w5317958')?.rings[0]);
@@ -275,10 +292,22 @@ function buildStatic(): MeshBuilder {
   }
   // King's Road: pavement and kerbs along both sides, street furniture from OSM
   if (cors.length) {
-    const inB = (x: number, z: number) => OSM.buildings.some((bl) => { const r = bl.rings[0]; return x > -HALF && pointInRing(x, z, r); });
+    // footprints bucketed on a 20 m grid (the pavement builders test thousands of points)
+    const G = 20, grid = new Map<string, OsmBuilding[]>();
+    for (const bl of OSM.buildings) {
+      const r = bl.rings[0]; let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+      for (let i = 0; i < r.length; i += 2) { x0 = Math.min(x0, r[i]); x1 = Math.max(x1, r[i]); z0 = Math.min(z0, r[i + 1]); z1 = Math.max(z1, r[i + 1]); }
+      for (let gx = Math.floor(x0 / G); gx <= Math.floor(x1 / G); gx++) for (let gz = Math.floor(z0 / G); gz <= Math.floor(z1 / G); gz++) { const k = `${gx},${gz}`; if (!grid.has(k)) grid.set(k, []); grid.get(k)!.push(bl); }
+    }
+    const inB = (x: number, z: number) => (grid.get(`${Math.floor(x / G)},${Math.floor(z / G)}`) ?? []).some((bl) => pointInRing(x, z, bl.rings[0]));
     krStats = {};
+    const done: (KrData & { id: string })[] = [];
     for (const c of cors) {
-      const st = buildKrStreet(b, c, OSM.roads, inB);
+      // a later street leaves alone the pavements already laid by earlier ones (junctions)
+      const prev = done.map((p) => { const xs = p.line.filter((_, i) => i % 2 === 0), zs = p.line.filter((_, i) => i % 2 === 1), m = p.roadW / 2 + (p.paveW ?? 11) + 1; return { p, x0: Math.min(...xs) - m, x1: Math.max(...xs) + m, z0: Math.min(...zs) - m, z1: Math.max(...zs) + m }; });
+      const avoid = (x: number, z: number) => prev.some(({ p, x0, x1, z0, z1 }) => { if (x < x0 || x > x1 || z < z0 || z > z1) return false; const q = corNear(p, x, z); return q.s >= p.sStart - 2 && q.s <= p.sEnd + 2 && q.d < (p.roadW / 2) + (p.paveW ?? 11) + 0.5; });
+      const st = buildKrStreet(b, c, OSM.roads, inB, avoid);
+      done.push(c);
       const fu = withCorridorLine(c.id, () => buildKrFurniture(b, c, squareSigns));
       krStats[`${c.id}.pavement`] = st.tris; krStats[`${c.id}.furniture`] = fu.tris;
     }
@@ -343,6 +372,7 @@ export const osmMap: SceneMap = {
   half: HALF,
   baseScale: 0.0015, // 700 m → 1.05 m on the table
   buildStatic,
+  buildLod: () => ({ detail: lodDetail, simple: lodSimple }),
   buildPlinth,
   labels,
   attribution: { text: OSM.meta.attribution, url: OSM.meta.copyrightUrl },
