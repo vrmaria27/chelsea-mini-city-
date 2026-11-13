@@ -69,3 +69,4 @@ for (const m of got) {
 }
 console.log('candidates', got.length, 'downloaded', n);
 writeFileSync(`${out}/index.json`, JSON.stringify(meta, null, 1));
+// trigger 2026-11-13T21:59:41
