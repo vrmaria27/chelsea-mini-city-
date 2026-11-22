@@ -7,6 +7,7 @@
 // dimensions are listed in docs/sloane-square.md. Everything is in map metres.
 import { MeshBuilder, hex, rng, shade, type RGB } from '../../engine/geometry';
 import { NatureBuilder, type V3 } from '../../engine/nature';
+import { MAT, tagColour } from '../../engine/materials';
 import { buildBranches, buildCardFoliage, buildClumpFoliage, planeSkeleton, squareTreeSpec } from './planeTree';
 
 export interface SquareData {
@@ -51,6 +52,11 @@ const C = {
   water: hex('#5f8796'),
   waterFall: hex('#cfe3ea'),
 };
+for (const c of C.flags) tagColour(c, MAT.PAVING);
+for (const c of [C.kerb, C.kerbFace, C.granite]) tagColour(c, MAT.KERB);
+for (const c of [C.portland, C.portlandShade, C.coping]) tagColour(c, MAT.STONE);
+for (const c of [C.bronze, C.bronzeHi, C.patina]) tagColour(c, MAT.BRONZE);
+for (const c of [C.iron, C.lampGreen, C.steel]) tagColour(c, MAT.METAL);
 
 // ---- small geometry helpers (lit MeshBuilder) -------------------------------------------------------
 type Pt = [number, number];
@@ -149,14 +155,24 @@ function prism(b: MeshBuilder, r: Pt[], y0: number, y1: number, side: RGB, top: 
 }
 
 /** Lathe (surface of revolution) from a profile of [radius, y] pairs; colours per ring. */
-export function lathe(b: MeshBuilder, x: number, z: number, profile: [number, number][], n: number, colAt: (k: number) => RGB): void {
+export function lathe(b: MeshBuilder, x: number, z: number, profile: [number, number][], n: number, colAt: (k: number) => RGB, smooth = false): void {
+  // smooth: normals averaged between neighbouring profile segments (cast bronze, turned stone)
+  const segN = (k: number): [number, number] => { const [r0, y0] = profile[k], [r1, y1] = profile[k + 1]; const dr = r1 - r0, dy = y1 - y0, l = Math.hypot(dr, dy) || 1; return [dy / l, -dr / l]; };
+  const vN = (k: number): [number, number] => {
+    const a = k > 0 ? segN(k - 1) : segN(k), c = k < profile.length - 1 ? segN(Math.min(k, profile.length - 2)) : segN(k - 1);
+    const h = [a[0] + c[0], a[1] + c[1]], l = Math.hypot(h[0], h[1]) || 1; return [h[0] / l, h[1] / l];
+  };
   for (let k = 0; k + 1 < profile.length; k++) {
     const [r0, y0] = profile[k], [r1, y1] = profile[k + 1];
     const col = colAt(k);
+    const n0 = smooth ? vN(k) : segN(k), n1 = smooth ? vN(k + 1) : segN(k);
     for (let i = 0; i < n; i++) {
       const a0 = (i / n) * Math.PI * 2, a1 = ((i + 1) / n) * Math.PI * 2;
       const p = (r: number, a: number, y: number) => [x + Math.cos(a) * r, y, z + Math.sin(a) * r];
-      b.quad(p(r0, a1, y0), p(r0, a0, y0), p(r1, a0, y1), p(r1, a1, y1), col);
+      if (!smooth) { b.quad(p(r0, a1, y0), p(r0, a0, y0), p(r1, a0, y1), p(r1, a1, y1), col); continue; }
+      const N = (nn: [number, number], a: number) => [Math.cos(a) * nn[0], nn[1], Math.sin(a) * nn[0]];
+      b.triN(p(r0, a1, y0), p(r0, a0, y0), p(r1, a0, y1), N(n0, a1), N(n0, a0), N(n1, a0), col);
+      b.triN(p(r0, a1, y0), p(r1, a0, y1), p(r1, a1, y1), N(n0, a1), N(n1, a0), N(n1, a1), col);
     }
   }
 }
@@ -171,8 +187,11 @@ export function limb(b: MeshBuilder, a: V3, c: V3, ra: number, rc: number, col: 
   const ul = Math.hypot(u[0], u[1], u[2]); u = [u[0] / ul, u[1] / ul, u[2] / ul];
   const w: V3 = [d[1] * u[2] - d[2] * u[1], d[2] * u[0] - d[0] * u[2], d[0] * u[1] - d[1] * u[0]];
   const at = (p: V3, r: number, k: number) => { const t = (k / sides) * Math.PI * 2; return [p[0] + (u[0] * Math.cos(t) + w[0] * Math.sin(t)) * r, p[1] + (u[1] * Math.cos(t) + w[1] * Math.sin(t)) * r, p[2] + (u[2] * Math.cos(t) + w[2] * Math.sin(t)) * r]; };
+  const nrm = (k: number) => { const t = (k / sides) * Math.PI * 2; return [u[0] * Math.cos(t) + w[0] * Math.sin(t), u[1] * Math.cos(t) + w[1] * Math.sin(t), u[2] * Math.cos(t) + w[2] * Math.sin(t)]; };
   for (let k = 0; k < sides; k++) {
-    b.quad(at(a, ra, k), at(a, ra, k + 1), at(c, rc, k + 1), at(c, rc, k), col);
+    // smooth normals round the limb (cast figure)
+    b.triN(at(a, ra, k), at(a, ra, k + 1), at(c, rc, k + 1), nrm(k), nrm(k + 1), nrm(k + 1), col);
+    b.triN(at(a, ra, k), at(c, rc, k + 1), at(c, rc, k), nrm(k), nrm(k + 1), nrm(k), col);
   }
   // end caps (small fans) so short limbs read as solid
   for (let k = 0; k < sides; k++) { b.tri(a, at(a, ra, k + 1), at(a, ra, k), col); b.tri(c, at(c, rc, k), at(c, rc, k + 1), col); }
@@ -181,7 +200,12 @@ export function limb(b: MeshBuilder, a: V3, c: V3, ra: number, rc: number, col: 
 /** Ellipsoid blob (lit) for heads, conch, cushion. */
 export function ellipsoid(b: MeshBuilder, c: V3, rx: number, ry: number, rz: number, col: RGB, n = 8, m = 5): void {
   const P = (i: number, j: number) => { const th = (i / n) * Math.PI * 2, ph = (j / m) * Math.PI - Math.PI / 2; return [c[0] + Math.cos(ph) * Math.cos(th) * rx, c[1] + Math.sin(ph) * ry, c[2] + Math.cos(ph) * Math.sin(th) * rz]; };
-  for (let j = 0; j < m; j++) for (let i = 0; i < n; i++) b.quad(P(i, j), P(i, j + 1), P(i + 1, j + 1), P(i + 1, j), col);
+  // smooth normals: the ellipsoid's gradient
+  const N = (i: number, j: number) => { const q = P(i, j); return [(q[0] - c[0]) / (rx * rx), (q[1] - c[1]) / (ry * ry), (q[2] - c[2]) / (rz * rz)]; };
+  for (let j = 0; j < m; j++) for (let i = 0; i < n; i++) {
+    b.triN(P(i, j), P(i, j + 1), P(i + 1, j + 1), N(i, j), N(i, j + 1), N(i + 1, j + 1), col);
+    b.triN(P(i, j), P(i + 1, j + 1), P(i + 1, j), N(i, j), N(i + 1, j + 1), N(i + 1, j), col);
+  }
 }
 
 // ---- the square -------------------------------------------------------------------------------------
@@ -321,7 +345,7 @@ export function buildVenusFountain(b: MeshBuilder, sq: SquareData): void {
   // bronze vase: foot, banded lower body, swelling relief zone, flared rim
   const by = Y + 1.02;
   const prof: [number, number][] = [[0.55, 0], [0.6, 0.06], [0.6, 0.16], [0.56, 0.22], [0.58, 0.4], [0.64, 0.75], [0.69, 1.1], [0.72, 1.38], [0.79, 1.48], [0.81, 1.56], [0.76, 1.6]];
-  lathe(b, x, z, prof.map(([rr, yy]) => [rr, by + yy]), 16, (k) => (k >= 4 && k <= 6 ? (k % 2 ? C.bronzeHi : C.bronze) : k === 1 ? C.patina : C.bronze));
+  lathe(b, x, z, prof.map(([rr, yy]) => [rr, by + yy]), 28, (k) => (k >= 4 && k <= 6 ? (k % 2 ? C.bronzeHi : C.bronze) : k === 1 ? C.patina : C.bronze), true);
   // relief suggestion: raised figures as slight bumps on the body (Charles II, Nell Gwynn, cupid, deer)
   const rr = rng(1952);
   for (let i = 0; i < 10; i++) {
@@ -333,8 +357,8 @@ export function buildVenusFountain(b: MeshBuilder, sq: SquareData): void {
   flatPoly(b, ngon(x, z, 0.74, 16), by + 1.5, C.bronze);
   // drum pedestal and drapery cushion
   const py = by + 1.5;
-  b.cylinder(x, z, py, py + 0.32, 0.26, 12, C.bronze);
-  ellipsoid(b, [x, py + 0.36, z], 0.42, 0.09, 0.36, C.bronzeHi, 10, 4);
+  lathe(b, x, z, [[0.24, py], [0.27, py + 0.04], [0.25, py + 0.16], [0.27, py + 0.3], [0.2, py + 0.33]], 20, () => C.bronze, true);
+  ellipsoid(b, [x, py + 0.36, z], 0.42, 0.09, 0.36, C.bronzeHi, 16, 6);
   venus(b, x, py + 0.42, z, faceYaw(f));
 }
 
@@ -351,29 +375,32 @@ function venus(b: MeshBuilder, x: number, y: number, z: number, yaw: number): vo
   // local: +z forward, +x her left→right? (x right of figure), y up
   const P = (lx: number, ly: number, lz: number): V3 => [x + lx * c + lz * s, y + ly, z - lx * s + lz * c];
   const br = C.bronze, hi = C.bronzeHi;
+  // finer, smooth-shaded limbs and volumes than the rest of the square's furniture: the figure is seen close up
+  const L = (p: V3, q: V3, ra: number, rc: number, col: RGB, sides = 10) => limb(b, p, q, ra, rc, col, Math.max(sides, 10));
+  const E = (c0: V3, rx: number, ry: number, rz: number, col: RGB) => ellipsoid(b, c0, rx, ry, rz, col, 14, 8);
   // pelvis and folded left leg (shin under the body, foot behind)
-  ellipsoid(b, P(-0.02, 0.17, -0.06), 0.17, 0.12, 0.15, br);
-  limb(b, P(-0.1, 0.14, -0.04), P(-0.14, 0.1, 0.24), 0.1, 0.075, br);
-  limb(b, P(-0.14, 0.08, 0.24), P(-0.12, 0.05, -0.2), 0.07, 0.045, br);
-  limb(b, P(-0.12, 0.04, -0.2), P(-0.1, 0.02, -0.3), 0.045, 0.035, hi);
+  E(P(-0.02, 0.17, -0.06), 0.17, 0.12, 0.15, br);
+  L(P(-0.1, 0.14, -0.04), P(-0.14, 0.1, 0.24), 0.1, 0.075, br);
+  L(P(-0.14, 0.08, 0.24), P(-0.12, 0.05, -0.2), 0.07, 0.045, br);
+  L(P(-0.12, 0.04, -0.2), P(-0.1, 0.02, -0.3), 0.045, 0.035, hi);
   // raised right leg: thigh forward and up to the knee, shin down to the foot on the cushion
-  limb(b, P(0.1, 0.15, -0.04), P(0.15, 0.42, 0.26), 0.1, 0.07, br);
-  limb(b, P(0.15, 0.42, 0.26), P(0.17, 0.04, 0.2), 0.065, 0.045, br);
-  limb(b, P(0.17, 0.03, 0.2), P(0.18, 0.02, 0.32), 0.04, 0.035, hi);
+  L(P(0.1, 0.15, -0.04), P(0.15, 0.42, 0.26), 0.1, 0.07, br);
+  L(P(0.15, 0.42, 0.26), P(0.17, 0.04, 0.2), 0.065, 0.045, br);
+  L(P(0.17, 0.03, 0.2), P(0.18, 0.02, 0.32), 0.04, 0.035, hi);
   // torso leaning forward
-  limb(b, P(0, 0.2, -0.06), P(0.02, 0.62, 0.05), 0.15, 0.13, br, 8);
-  ellipsoid(b, P(0.02, 0.64, 0.06), 0.15, 0.08, 0.1, br);
+  L(P(0, 0.2, -0.06), P(0.02, 0.62, 0.05), 0.15, 0.13, br, 8);
+  E(P(0.02, 0.64, 0.06), 0.15, 0.08, 0.1, br);
   // head bowed, hair gathered in a bun
-  limb(b, P(0.02, 0.68, 0.07), P(0.03, 0.76, 0.1), 0.045, 0.045, br);
-  ellipsoid(b, P(0.03, 0.83, 0.13), 0.075, 0.09, 0.08, br);
-  ellipsoid(b, P(0.02, 0.92, 0.08), 0.05, 0.04, 0.05, hi);
+  L(P(0.02, 0.68, 0.07), P(0.03, 0.76, 0.1), 0.045, 0.045, br);
+  E(P(0.03, 0.83, 0.13), 0.075, 0.09, 0.08, br);
+  E(P(0.02, 0.92, 0.08), 0.05, 0.04, 0.05, hi);
   // right arm raised: elbow out and forward, hand at the right side of the head holding the conch
-  limb(b, P(0.14, 0.6, 0.03), P(0.27, 0.5, 0.2), 0.045, 0.04, br);
-  limb(b, P(0.27, 0.5, 0.2), P(0.15, 0.85, 0.17), 0.04, 0.035, br);
-  ellipsoid(b, P(0.15, 0.9, 0.17), 0.09, 0.075, 0.07, C.patina);
+  L(P(0.14, 0.6, 0.03), P(0.27, 0.5, 0.2), 0.045, 0.04, br);
+  L(P(0.27, 0.5, 0.2), P(0.15, 0.85, 0.17), 0.04, 0.035, br);
+  E(P(0.15, 0.9, 0.17), 0.09, 0.075, 0.07, C.patina);
   // left arm down across the body to rest on the raised knee
-  limb(b, P(-0.14, 0.6, 0.03), P(-0.06, 0.4, 0.24), 0.045, 0.04, br);
-  limb(b, P(-0.06, 0.4, 0.24), P(0.12, 0.45, 0.3), 0.04, 0.035, br);
+  L(P(-0.14, 0.6, 0.03), P(-0.06, 0.4, 0.24), 0.045, 0.04, br);
+  L(P(-0.06, 0.4, 0.24), P(0.12, 0.45, 0.3), 0.04, 0.035, br);
 }
 
 /** Chelsea war memorial: octagonal three-step base, plinth, tapered octagonal shaft and plain cross (~8 m). */
@@ -426,6 +453,8 @@ export interface SquareNature {
   lowFoliage: Float32Array;
   lowBranches: Float32Array;
   water: Float32Array;
+  /** Falling water (translucent streams, drawn last with the nature shader's mode 5). */
+  falls: Float32Array;
   stats: { trees: number; squareTrees: number; branchTris: number; coreTris: number; cardTris: number; lowTris: number; waterTris: number };
 }
 
@@ -455,35 +484,40 @@ export function buildSquareNature(sq: SquareData, extra?: (n: NatureSet) => numb
     buildBranches(lowB, sk, o, 0, 1, (d) => (d === 0 ? 6 : 4));
     buildClumpFoliage(lowF, sk, o, 0.3);
   }
-  const water = fountainWater(sq);
+  const { pool: water, falls } = fountainWater(sq);
   const extraTrees = extra ? extra({ branches, core, cards, lowB, lowF, water }) : 0;
   const tri = (n: NatureBuilder) => n.vertexCount / 3;
   return {
-    branches: branches.toFloat32(), core: core.toFloat32(), cards: cards.toFloat32(), lowFoliage: lowF.toFloat32(), lowBranches: lowB.toFloat32(), water: water.toFloat32(),
+    branches: branches.toFloat32(), core: core.toFloat32(), cards: cards.toFloat32(), lowFoliage: lowF.toFloat32(), lowBranches: lowB.toFloat32(), water: water.toFloat32(), falls: falls.toFloat32(),
     stats: { trees: sq.trees.length + extraTrees, squareTrees: sq.trees.length, branchTris: tri(branches), coreTris: tri(core), cardTris: tri(cards), lowTris: tri(lowF) + tri(lowB), waterTris: tri(water) },
   };
 }
 
-/** Pool surface, the bowl's brimming top, the sheet overflowing its rim and the jet from the conch. */
-function fountainWater(sq: SquareData): NatureBuilder {
-  const w = new NatureBuilder();
+/**
+ * Pool surface and brimming bowl (mode 2: rippled, reflective), and the falling water (mode 5): the
+ * overflow from the vase rim as a ring of thin translucent streams (reference: ss/240, water falls from
+ * the rim in separate runs rather than a solid sheet), the arc from the conch, and low spray where the
+ * water meets the pool. Falling-water vertices carry u = position across the stream (0..1 per stream),
+ * v = distance fallen (m), and colour.r = opacity scale.
+ */
+function fountainWater(sq: SquareData): { pool: NatureBuilder; falls: NatureBuilder } {
+  const w = new NatureBuilder(), falls = new NatureBuilder();
   const f = sq.fountain;
   const Y = SQUARE_Y + 0.012;
   const pool = inset(ringPts(f.basin), 0.46);
-  // pool surface (fan from centre, around the stone base)
   const up: V3 = [0, 1, 0];
   const wy = Y + 0.38;
+  // pool surface: u, v carry the offset from the fountain centre (ripple rings in the shader)
   const base = ngon(f.x, f.z, 1.31, 8, Math.PI / 8);
+  const vp = (pt: Pt) => w.vert([pt[0], wy, pt[1]], up, C.water, pt[0] - f.x, pt[1] - f.z);
   for (let i = 0; i < pool.length; i++) {
     const p = pool[i], q = pool[(i + 1) % pool.length];
-    // quad between the pool edge and the stone base, matched by angle
     const ang = (pt: Pt) => Math.atan2(pt[1] - f.z, pt[0] - f.x);
     const near = (a: number) => base.reduce((best, bp) => (Math.abs(Math.atan2(Math.sin(ang(bp) - a), Math.cos(ang(bp) - a))) < Math.abs(Math.atan2(Math.sin(ang(best) - a), Math.cos(ang(best) - a))) ? bp : best));
     const bp = near(ang(p)), bq = near(ang(q));
     const tri = (a: Pt, b2: Pt, c: Pt) => {
       const cross = (b2[0] - a[0]) * (c[1] - a[1]) - (b2[1] - a[1]) * (c[0] - a[0]);
-      const pts = cross < 0 ? [a, b2, c] : [a, c, b2];
-      for (const pt of pts) w.vert([pt[0], wy, pt[1]], up, C.water, pt[0], pt[1]);
+      for (const pt of cross < 0 ? [a, b2, c] : [a, c, b2]) vp(pt);
     };
     tri(p, q, bq);
     if (bp !== bq) tri(p, bq, bp);
@@ -493,33 +527,68 @@ function fountainWater(sq: SquareData): NatureBuilder {
   const rim = ngon(f.x, f.z, 0.76, 16);
   for (let i = 0; i < 16; i++) {
     const a = rim[i], c = rim[(i + 1) % 16];
-    w.vert([f.x, bowlY, f.z], up, C.water); w.vert([c[0], bowlY, c[1]], up, C.water); w.vert([a[0], bowlY, a[1]], up, C.water);
+    w.vert([f.x, bowlY, f.z], up, C.water, 0, 0); w.vert([c[0], bowlY, c[1]], up, C.water, c[0] - f.x, c[1] - f.z); w.vert([a[0], bowlY, a[1]], up, C.water, a[0] - f.x, a[1] - f.z);
   }
-  // overflow sheet: falls from the rim and spreads slightly as it drops (both faces)
-  const r0 = 0.82, r1 = 0.98;
-  for (let i = 0; i < 24; i++) {
-    const a0 = (i / 24) * Math.PI * 2, a1 = ((i + 1) / 24) * Math.PI * 2;
-    const P = (a: number, r: number, y: number): V3 => [f.x + Math.cos(a) * r, y, f.z + Math.sin(a) * r];
-    const n0: V3 = [Math.cos(a0), 0.2, Math.sin(a0)], n1: V3 = [Math.cos(a1), 0.2, Math.sin(a1)];
-    const A = P(a0, r0, bowlY), B = P(a1, r0, bowlY), Cc = P(a1, r1, wy), D = P(a0, r1, wy);
-    w.vert(A, n0, C.waterFall, 0, 0, 0.2, i); w.vert(D, n0, C.waterFall, 0, 0, 0.2, i); w.vert(Cc, n1, C.waterFall, 0, 0, 0.2, i);
-    w.vert(A, n0, C.waterFall, 0, 0, 0.2, i); w.vert(Cc, n1, C.waterFall, 0, 0, 0.2, i); w.vert(B, n1, C.waterFall, 0, 0, 0.2, i);
+  // overflow: 18 streams round the rim, each a narrow ribbon curving out and down (parabolic fall),
+  // a little wider at the bottom, with gaps between them
+  const rnd = rng(1953);
+  const N = 18;
+  for (let i = 0; i < N; i++) {
+    const a = ((i + 0.5 + (rnd() - 0.5) * 0.4) / N) * Math.PI * 2;
+    const width = 0.1 + rnd() * 0.08, out = 0.18 + rnd() * 0.08;
+    const dir: V3 = [Math.cos(a), 0, Math.sin(a)], side: V3 = [-Math.sin(a), 0, Math.cos(a)];
+    const H = bowlY - wy;
+    const steps = 6;
+    const pt = (t: number, sx: number): V3 => {
+      const r = 0.8 + out * Math.sqrt(t) + 0.04;
+      const hw = (width / 2) * (1 + 0.8 * t) * sx;
+      return [f.x + dir[0] * r + side[0] * hw, bowlY + 0.02 - H * t * t * 0.98 - H * 0.02 * t, f.z + dir[2] * r + side[2] * hw];
+    };
+    for (let k = 0; k < steps; k++) {
+      const t0 = k / steps, t1 = (k + 1) / steps;
+      const A = pt(t0, -1), B = pt(t0, 1), Cc = pt(t1, 1), D = pt(t1, -1);
+      const v0 = H * t0 * t0, v1 = H * t1 * t1;
+      const op: RGB = [0.85 + rnd() * 0.15, 1, 1];
+      const nn = dir;
+      const u0 = i + 0.02, u1 = i + 0.98;
+      falls.vert(A, nn, op, u0, v0); falls.vert(D, nn, op, u0, v1); falls.vert(Cc, nn, op, u1, v1);
+      falls.vert(A, nn, op, u0, v0); falls.vert(Cc, nn, op, u1, v1); falls.vert(B, nn, op, u1, v0);
+    }
+    // spray where it meets the pool: two small crossed translucent quads, fading upward
+    const foot = pt(1, 0);
+    for (const sd of [dir, side]) {
+      const s0: V3 = [foot[0] - sd[0] * 0.16, wy - 0.01, foot[2] - sd[2] * 0.16], s1: V3 = [foot[0] + sd[0] * 0.16, wy - 0.01, foot[2] + sd[2] * 0.16];
+      const op: RGB = [0.45, 1, 1];
+      const t0: V3 = [s0[0], wy + 0.14, s0[2]], t1: V3 = [s1[0], wy + 0.14, s1[2]];
+      falls.vert(s0, up, op, i + 0.1, 0.0); falls.vert(s1, up, op, i + 0.9, 0.0); falls.vert(t1, up, op, i + 0.9, 0.3);
+      falls.vert(s0, up, op, i + 0.1, 0.0); falls.vert(t1, up, op, i + 0.9, 0.3); falls.vert(t0, up, op, i + 0.1, 0.3);
+    }
   }
-  // jet from the conch: a thin arc out over the bowl rim into the pool
+  // jet from the conch: a thin flattened stream (two crossed ribbons), arcing out over the bowl rim
   const yaw = faceYaw(f);
   const fx = Math.sin(yaw), fz = Math.cos(yaw);
   const rx = Math.cos(yaw), rz = -Math.sin(yaw);
   const conch: V3 = [f.x + rx * 0.15 + fx * 0.17, Y + 1.02 + 1.5 + 0.42 + 0.9, f.z + rz * 0.15 + fz * 0.17];
   const out: V3 = [rx * 0.8 + fx * 0.6, 0, rz * 0.8 + fz * 0.6];
   const ol = Math.hypot(out[0], out[2]);
-  let prev = conch;
-  for (let k = 1; k <= 16; k++) {
-    const t = k / 10;
-    const dist = 2.0 * t;
-    const p: V3 = [conch[0] + (out[0] / ol) * dist, conch[1] + 0.35 * t - 3.3 * t * t, conch[2] + (out[2] / ol) * dist];
-    if (p[1] < wy) break;
-    w.tube(prev, p, 0.04, 0.035, 5, () => C.waterFall, 0.1, 0.1, 0.5);
-    prev = p;
+  const ux = out[0] / ol, uz = out[2] / ol;
+  const jet = (t: number): V3 => [conch[0] + ux * 2.0 * t, conch[1] + 0.35 * t - 3.3 * t * t, conch[2] + uz * 2.0 * t];
+  let along = 0;
+  for (let k = 0; k < 16; k++) {
+    const t0 = k / 10, t1 = (k + 1) / 10;
+    const a = jet(t0), c = jet(t1);
+    if (a[1] < wy) break;
+    const seg = Math.hypot(c[0] - a[0], c[1] - a[1], c[2] - a[2]);
+    const r0 = 0.018 + 0.012 * t0, r1 = 0.018 + 0.012 * t1;
+    const op: RGB = [1, 1, 1];
+    for (const [ox, oy, oz] of [[-uz, 0, ux], [0, 1, 0]] as V3[]) {
+      const n: V3 = oy ? [ux, 0, uz] : [0, 1, 0];
+      const A: V3 = [a[0] - ox * r0, a[1] - oy * r0, a[2] - oz * r0], B: V3 = [a[0] + ox * r0, a[1] + oy * r0, a[2] + oz * r0];
+      const D: V3 = [c[0] - ox * r1, c[1] - oy * r1, c[2] - oz * r1], Cc: V3 = [c[0] + ox * r1, c[1] + oy * r1, c[2] + oz * r1];
+      falls.vert(A, n, op, 30.05, along); falls.vert(D, n, op, 30.05, along + seg); falls.vert(Cc, n, op, 30.95, along + seg);
+      falls.vert(A, n, op, 30.05, along); falls.vert(Cc, n, op, 30.95, along + seg); falls.vert(B, n, op, 30.95, along);
+    }
+    along += seg;
   }
-  return w;
+  return { pool: w, falls };
 }

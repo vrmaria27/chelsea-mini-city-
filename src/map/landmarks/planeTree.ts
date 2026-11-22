@@ -49,7 +49,10 @@ export function planeSkeleton(spec: TreeSpec): Skeleton {
   const lean: V3 = [(r() - 0.5) * 0.12, 1, (r() - 0.5) * 0.12];
   const mid: V3 = add([0, 0, 0], scale(norm(lean), spec.clearTrunk * 0.55));
   const fork: V3 = add(mid, scale(norm([lean[0] * 1.6, 1, lean[2] * 1.6]), spec.clearTrunk * 0.45));
-  segments.push({ a: [0, 0, 0], b: mid, ra: spec.trunkR * 1.12, rb: spec.trunkR * 0.95, depth: 0 });
+  // root flare: a short swollen base (buttress lobes come from the irregular trunk section)
+  const flareTop = add([0, 0, 0], scale(norm(lean), 0.75));
+  segments.push({ a: [0, -0.05, 0], b: flareTop, ra: spec.trunkR * 1.55, rb: spec.trunkR * 1.1, depth: 0 });
+  segments.push({ a: flareTop, b: mid, ra: spec.trunkR * 1.1, rb: spec.trunkR * 0.95, depth: 0 });
   segments.push({ a: mid, b: fork, ra: spec.trunkR * 0.95, rb: spec.trunkR * 0.85, depth: 0 });
   // Distance outside the crown ellipsoid (>1 = outside)
   const outside = (p: V3) => Math.hypot((p[0] - crownC[0]) / crownR[0], (p[1] - crownC[1]) / crownR[1], (p[2] - crownC[2]) / crownR[0]);
@@ -67,7 +70,9 @@ export function planeSkeleton(spec: TreeSpec): Skeleton {
       const o = outside(nq);
       if (o > lobe) nq = add(crownC, scale([nq[0] - crownC[0], nq[1] - crownC[1], nq[2] - crownC[2]], lobe / o));
       const r0 = k === 0 ? radius : radius * 0.86, r1 = k === 0 ? radius * 0.86 : radius * 0.72;
-      segments.push({ a: q, b: nq, ra: r0, rb: r1, depth });
+      // branch collar: the new branch starts inside its parent, swelling slightly where it joins
+      const a0: V3 = k === 0 ? add(q, scale(dir, -Math.min(radius * 1.4, 0.35))) : q;
+      segments.push({ a: a0, b: nq, ra: k === 0 ? r0 * 1.18 : r0, rb: r1, depth });
       q = nq;
     }
     if (depth >= MAX || radius < 0.03) { tips.push({ p: q, dir, depth }); return; }
@@ -154,11 +159,20 @@ export function buildBranches(b: NatureBuilder, sk: Skeleton, o: TreeBuildOption
     const i = Math.floor(((t + 1.8) / 3.6) * BARK.length);
     return BARK[Math.max(0, Math.min(BARK.length - 1, i))];
   };
+  // irregular trunk section: low-frequency lobes that turn as they rise (no smooth cylinder), strongest at
+  // the root flare; limbs get a milder version
+  const lobe = (y: number, k: number, sides: number, amp: number) => {
+    const t = (k / sides) * Math.PI * 2;
+    return 1 + amp * (0.55 * Math.cos(3 * t + off + y * 0.7) + 0.3 * Math.cos(5 * t - off * 0.6 + y * 1.3) + 0.15 * Math.sin(2 * t + y));
+  };
   for (const s of sk.segments) {
     if (s.depth < minDepth || s.depth > maxDepth) continue;
-    const sides = sidesFor(s.depth);
+    const sides = s.depth === 0 && sidesFor(0) >= 8 ? 10 : sidesFor(s.depth);
     const sw = (d: number) => (d <= 1 ? 0 : Math.min(1, (d - 1) * 0.3));
-    b.tube(P(s.a), P(s.b), s.ra, s.rb, sides, (i, end) => barkAt(end ? s.b[1] : s.a[1], i % sides, sides), sw(s.depth), sw(s.depth + 1), o.phase, s.depth >= 3);
+    const amp = s.depth === 0 ? (s.a[1] < 0.2 ? 0.16 : 0.07) : s.depth === 1 ? 0.05 : 0;
+    const flareEnd = s.depth === 0 && s.a[1] < 0.2;
+    const radiusAt = amp ? (k: number, end: 0 | 1) => lobe(end ? s.b[1] : s.a[1], k, sides, end && flareEnd ? 0.07 : amp) : undefined;
+    b.tube(P(s.a), P(s.b), s.ra, s.rb, sides, (i, end) => barkAt(end ? s.b[1] : s.a[1], i % sides, sides), sw(s.depth), sw(s.depth + 1), o.phase, s.depth >= 3, s.depth <= 2, radiusAt);
   }
 }
 
@@ -190,9 +204,17 @@ export function buildCardFoliage(core: NatureBuilder, cards: NatureBuilder, sk: 
     const q: V3 = [lerp(s.b[0], sk.crownC[0], 0.5), lerp(s.b[1], sk.crownC[1], 0.5), lerp(s.b[2], sk.crownC[2], 0.5)];
     core.clump(P(q), 0.95, 0.8, C, mul(LEAF_TOP[i % 4], 0.85), mul(LEAF_BOTTOM[i % 4], 1.0), r, 0.3, o.phase);
   });
+  // canopy gaps: a smooth 3D noise removes whole clusters of foliage (sky shows through in patches, as
+  // in the reference photographs) instead of thinning every tip evenly
+  const g0 = r() * 10, g1 = r() * 10;
+  const gap = (p: V3) => Math.sin(p[0] * 0.55 + g0) * Math.sin(p[1] * 0.7 + g1) * Math.sin(p[2] * 0.6 + g0 * 0.7) + 0.35 * Math.sin(p[0] * 1.3 - p[2] * 1.1 + g1);
+  // colour variation between foliage clusters: yellower where outer and sunlit, bluer and darker inside
+  const hues: RGB[] = [[1.0, 1.0, 1.0], [1.08, 1.06, 0.82], [0.9, 0.98, 1.02], [1.02, 0.96, 0.86], [0.94, 1.02, 0.94]];
   for (const t of sk.tips) {
     const inner = Math.hypot((t.p[0] - sk.crownC[0]) / sk.crownR[0], (t.p[1] - sk.crownC[1]) / sk.crownR[1], (t.p[2] - sk.crownC[2]) / sk.crownR[0]);
-    const ao = 0.75 + 0.25 * Math.min(1, inner);
+    if (inner > 0.55 && gap(t.p) > 0.5) continue;
+    const ao = 0.62 + 0.38 * Math.min(1, inner);
+    const hue = hues[Math.floor((Math.sin(t.p[0] * 0.9 + t.p[2] * 0.7 + g0) * 0.5 + 0.5) * hues.length) % hues.length];
     for (let k = 0; k < cardsPerTip; k++) {
       const off: V3 = [(r() - 0.5) * 1.4, (r() - 0.3) * 1.0, (r() - 0.5) * 1.4];
       const c = add(t.p, off);
@@ -206,8 +228,9 @@ export function buildCardFoliage(core: NatureBuilder, cards: NatureBuilder, sk: 
       const h = 0.75 + r() * 0.25;
       const cell = Math.floor(r() * 4);
       const uv: [number, number, number, number] = [(cell % 2) * 0.5, Math.floor(cell / 2) * 0.5, (cell % 2) * 0.5 + 0.5, Math.floor(cell / 2) * 0.5 + 0.5];
-      const tint = mix3([1.18, 1.18, 1.1], [1.02, 1.12, 0.95], r());
-      cards.card(P(c), scale(R(ax), h), scale(R(ay), h), uv, R(out), mul(tint, ao), 0.6 + 0.4 * Math.min(1, inner), o.phase);
+      const tint = mix3([1.12, 1.12, 1.04], [0.98, 1.06, 0.9], r());
+      const tv: RGB = [tint[0] * hue[0], tint[1] * hue[1], tint[2] * hue[2]];
+      cards.card(P(c), scale(R(ax), h), scale(R(ay), h), uv, R(out), mul(tv, ao * (0.9 + 0.2 * r())), 0.6 + 0.4 * Math.min(1, inner), o.phase);
     }
   }
 }

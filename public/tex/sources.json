@@ -1,0 +1,88 @@
+{
+ "layers": [
+  "brick",
+  "stone",
+  "paving",
+  "asphalt",
+  "bark"
+ ],
+ "size": 512,
+ "sources": {
+  "brick": {
+   "id": "red_bricks_04",
+   "name": "Red Bricks 04",
+   "authors": [
+    "Rob Tuytel"
+   ],
+   "licence": "CC0 1.0",
+   "page": "https://polyhaven.com/a/red_bricks_04",
+   "widthM": 2.5,
+   "maps": [
+    "diff",
+    "nor",
+    "rough"
+   ]
+  },
+  "stone": {
+   "id": "concrete_wall_008",
+   "name": "Concrete Wall 008",
+   "authors": [
+    "Dario Barresi",
+    "Charlotte Baglioni"
+   ],
+   "licence": "CC0 1.0",
+   "page": "https://polyhaven.com/a/concrete_wall_008",
+   "widthM": 2.7100000381469727,
+   "maps": [
+    "diff",
+    "nor",
+    "rough"
+   ]
+  },
+  "paving": {
+   "id": "concrete_floor_02",
+   "name": "Concrete Floor 02",
+   "authors": [
+    "Rob Tuytel"
+   ],
+   "licence": "CC0 1.0",
+   "page": "https://polyhaven.com/a/concrete_floor_02",
+   "widthM": 2,
+   "maps": [
+    "diff",
+    "nor",
+    "rough"
+   ]
+  },
+  "asphalt": {
+   "id": "asphalt_02",
+   "name": "Asphalt 02",
+   "authors": [
+    "Rob Tuytel"
+   ],
+   "licence": "CC0 1.0",
+   "page": "https://polyhaven.com/a/asphalt_02",
+   "widthM": 3.000000238418579,
+   "maps": [
+    "diff",
+    "nor",
+    "rough"
+   ]
+  },
+  "bark": {
+   "id": "bark_willow_02",
+   "name": "Bark Willow 02",
+   "authors": [
+    "Charlotte Baglioni"
+   ],
+   "licence": "CC0 1.0",
+   "page": "https://polyhaven.com/a/bark_willow_02",
+   "widthM": 2.1500000953674316,
+   "maps": [
+    "diff",
+    "nor",
+    "rough"
+   ]
+  }
+ }
+}

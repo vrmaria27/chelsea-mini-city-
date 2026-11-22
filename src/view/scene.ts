@@ -8,6 +8,7 @@ import { compose, invert, mat4, multiply, transformPoint, type Mat4, type Vec3 }
 import { buildAtlas, pushFlatLabel, uprightQuad } from '../engine/text';
 import { drawLeafAtlas } from '../map/landmarks/leafAtlas';
 import { ExplorePanel } from './panel';
+import { bakeLighting } from './bake';
 
 /** Depth of the wooden plinth below street level (map metres) in the miniature. */
 const PLINTH_DEPTH = 16;
@@ -67,7 +68,7 @@ export class ExplorerScene {
   private minorLabelMesh: Mesh;
   private labelTex: WebGLTexture;
   private decals: { tex: WebGLTexture; mesh: Mesh }[] = [];
-  private nature: { branches: Mesh; core: Mesh; cards: Mesh; lowB: Mesh; lowF: Mesh; water: Mesh; leaf: WebGLTexture } | null = null;
+  private nature: { branches: Mesh; core: Mesh; cards: Mesh; lowB: Mesh; lowF: Mesh; water: Mesh; falls: Mesh; leaf: WebGLTexture } | null = null;
   natureStats: Record<string, number> | null = null;
   readonly staticTriangles: number;
   /** Corridor models: triangles in the full and the simplified versions. */
@@ -138,7 +139,7 @@ export class ExplorerScene {
     if (nat) {
       this.nature = {
         branches: r.natureMesh(nat.branches), core: r.natureMesh(nat.core), cards: r.natureMesh(nat.cards),
-        lowB: r.natureMesh(nat.lowBranches), lowF: r.natureMesh(nat.lowFoliage), water: r.natureMesh(nat.water),
+        lowB: r.natureMesh(nat.lowBranches), lowF: r.natureMesh(nat.lowFoliage), water: r.natureMesh(nat.water), falls: r.natureMesh(nat.falls),
         leaf: r.createTexture(drawLeafAtlas()),
       };
       this.natureStats = nat.stats;
@@ -171,7 +172,32 @@ export class ExplorerScene {
     this.panelTex = r.createTexture(this.panel.canvas);
     this.panelMesh = r.texMesh(uprightQuad(this.panel.widthM, this.panel.heightM));
     this.setMiniature();
+    // baked sun shadows and contact shading (once: the sun is fixed in map space)
+    const t0 = performance.now();
+    bakeLighting(r, {
+      drawStatic: () => {
+        for (const t of this.tiles) r.drawLit(t.mesh, identityM, { world: true });
+        for (const t of this.lodTiles) if (t.detail ?? t.simple) r.drawLit((t.detail ?? t.simple)!.mesh, identityM, { world: true });
+      },
+      drawTrees: () => {
+        const n = this.nature;
+        if (!n) return;
+        r.drawNature(n.branches, identityM, { mode: 0, time: 0, sway: 0 });
+        r.drawNature(n.core, identityM, { mode: 0, time: 0, sway: 0 });
+        r.drawNature(n.cards, identityM, { mode: 1, time: 0, sway: 0, texture: n.leaf, doubleSided: true });
+      },
+    }, map.half);
+    this.bakeMs = performance.now() - t0;
+    // surface detail textures (CC0, public/tex): the world renders without them until they arrive
+    if (typeof Image !== 'undefined') {
+      const load = (src: string) => new Promise<HTMLImageElement>((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src; });
+      Promise.all([load('tex/detail.jpg'), load('tex/surface.jpg')]).then(([d, s]) => { r.setMaterialTextures(d, s); this.texturesReady = true; }).catch(() => { /* plain colours remain */ });
+    }
   }
+
+  /** Time taken by the lighting bake (ms) and whether the material textures have loaded. */
+  bakeMs = 0;
+  texturesReady = false;
 
   // ---- transforms -----------------------------------------------------------------------------
 
@@ -244,18 +270,21 @@ export class ExplorerScene {
     const r = this.r;
     r.setViewProj(viewProj);
     const mini = this.mode === 'miniature';
+    this.worldToMap(eye, this.v3);
+    r.eye.set(this.v3);
+    r.quality = this.lowDetail ? 0 : 1;
     if (mini && this.showFurniture) {
       r.drawLit(this.floorMesh, identityM);
       r.drawLit(this.tableMesh, this.anchorM);
     }
-    if (mini) r.drawLit(this.plinthMesh, this.modelM);
+    if (mini) r.drawLit(this.plinthMesh, this.modelM, { world: true });
     // Visibility: skip static tiles outside the view frustum (matters at street level).
     multiply(this.tmp, viewProj, this.modelM);
     frustumPlanes(this.tmp, this.frustum);
     let drawn = 0;
     for (const t of this.tiles) {
       if (!boxVisible(this.frustum, t.min, t.max)) continue;
-      r.drawLit(t.mesh, this.modelM);
+      r.drawLit(t.mesh, this.modelM, W);
       drawn++;
     }
     this.drawnTiles = drawn;
@@ -271,7 +300,7 @@ export class ExplorerScene {
         const use = d < near && t.detail ? t.detail : t.simple ?? t.detail;
         if (!use) continue;
         if (use === t.detail) dn++;
-        r.drawLit(use.mesh, this.modelM);
+        r.drawLit(use.mesh, this.modelM, W);
       }
       this.detailTiles = dn;
     }
@@ -314,7 +343,12 @@ export class ExplorerScene {
       }
     }
     // water is the only blended world layer: after the opaque geometry
-    if (this.nature) r.drawNature(this.nature.water, this.modelM, { mode: 2, time: opts.time % 3600, sway: this.reducedMotion ? 0 : 1 });
+    if (this.nature) {
+      const t = opts.time % 3600;
+      r.drawNature(this.nature.water, this.modelM, { mode: 2, time: this.reducedMotion ? 0 : t, sway: this.reducedMotion ? 0 : 1 });
+      // falling water keeps moving with reduced motion only as far as its streaks (no camera or world motion)
+      r.drawNature(this.nature.falls, this.modelM, { mode: 5, time: t, sway: 0 });
+    }
     if (mini && this.showLabels) {
       r.drawTex(this.labelMesh, this.modelM, this.labelTex);
       if (this.showMinorLabels) r.drawTex(this.minorLabelMesh, this.modelM, this.labelTex);
@@ -347,6 +381,7 @@ export class ExplorerScene {
 }
 
 const identityM = mat4();
+const W = { world: true } as const;
 
 /** Flat ring in the XZ plane (local units). */
 function ringMesh(r0: number, r1: number, n: number, col: RGB): MeshBuilder {
