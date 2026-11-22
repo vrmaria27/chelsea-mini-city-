@@ -1,0 +1,27 @@
+# Downloads CC0 textures (Poly Haven) into references/textures. Runs only on the 'textures-sq' branch;
+# never deployed. The packed maps used by the app are made locally and committed under public/tex.
+name: Fetch CC0 textures
+on:
+  workflow_dispatch:
+  push:
+    branches: [textures-sq]
+    paths: [scripts/assets/fetch-polyhaven.mjs, .github/workflows/fetch-textures.yml]
+permissions:
+  contents: write
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/assets/fetch-polyhaven.mjs references/textures
+      - name: Commit textures
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add references
+          git diff --cached --quiet && echo "No change" && exit 0
+          git commit -m "CC0 textures from Poly Haven (see references/textures/index.json)"
+          git push
