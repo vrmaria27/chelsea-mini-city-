@@ -36,21 +36,23 @@ export class NatureBuilder {
    * Tapered tube from a to b with smooth normals. colAt(i, end) lets callers mottle bark per vertex.
    * swayA/swayB are the sway weights at each end (0 for the trunk).
    */
-  tube(a: V3, b: V3, ra: number, rb: number, sides: number, colAt: (i: number, end: 0 | 1) => RGB, swayA = 0, swayB = 0, phase = 0, cap = false): void {
+  tube(a: V3, b: V3, ra: number, rb: number, sides: number, colAt: (i: number, end: 0 | 1) => RGB, swayA = 0, swayB = 0, phase = 0, cap = false, bark = false, radiusAt?: (k: number, end: 0 | 1) => number): void {
+    const U = bark ? -1 : 0; // u = -1 marks bark for the nature shader
     const axis = norm(sub(b, a));
     const ref: V3 = Math.abs(axis[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
     const u = norm(cross(axis, ref)), w = cross(axis, u);
-    const ring = (c: V3, r: number, k: number): { p: V3; n: V3 } => {
+    const ring = (c: V3, r: number, k: number, end: 0 | 1): { p: V3; n: V3 } => {
       const t = (k / sides) * Math.PI * 2, cs = Math.cos(t), sn = Math.sin(t);
       const n: V3 = [u[0] * cs + w[0] * sn, u[1] * cs + w[1] * sn, u[2] * cs + w[2] * sn];
-      return { p: [c[0] + n[0] * r, c[1] + n[1] * r, c[2] + n[2] * r], n };
+      const rr = r * (radiusAt ? radiusAt(k % sides, end) : 1);
+      return { p: [c[0] + n[0] * rr, c[1] + n[1] * rr, c[2] + n[2] * rr], n };
     };
     for (let k = 0; k < sides; k++) {
-      const a0 = ring(a, ra, k), a1 = ring(a, ra, k + 1), b0 = ring(b, rb, k), b1 = ring(b, rb, k + 1);
+      const a0 = ring(a, ra, k, 0), a1 = ring(a, ra, k + 1, 0), b0 = ring(b, rb, k, 1), b1 = ring(b, rb, k + 1, 1);
       const ca0 = colAt(k, 0), ca1 = colAt(k + 1, 0), cb0 = colAt(k, 1), cb1 = colAt(k + 1, 1);
-      this.vert(a0.p, a0.n, ca0, 0, 0, swayA, phase); this.vert(b1.p, b1.n, cb1, 0, 0, swayB, phase); this.vert(b0.p, b0.n, cb0, 0, 0, swayB, phase);
-      this.vert(a0.p, a0.n, ca0, 0, 0, swayA, phase); this.vert(a1.p, a1.n, ca1, 0, 0, swayA, phase); this.vert(b1.p, b1.n, cb1, 0, 0, swayB, phase);
-      if (cap) this.vert(b, axis, cb0, 0, 0, swayB, phase), this.vert(b0.p, axis, cb0, 0, 0, swayB, phase), this.vert(b1.p, axis, cb1, 0, 0, swayB, phase);
+      this.vert(a0.p, a0.n, ca0, U, 0, swayA, phase); this.vert(b1.p, b1.n, cb1, U, 0, swayB, phase); this.vert(b0.p, b0.n, cb0, U, 0, swayB, phase);
+      this.vert(a0.p, a0.n, ca0, U, 0, swayA, phase); this.vert(a1.p, a1.n, ca1, U, 0, swayA, phase); this.vert(b1.p, b1.n, cb1, U, 0, swayB, phase);
+      if (cap) this.vert(b, axis, cb0, U, 0, swayB, phase), this.vert(b0.p, axis, cb0, U, 0, swayB, phase), this.vert(b1.p, axis, cb1, U, 0, swayB, phase);
     }
   }
 

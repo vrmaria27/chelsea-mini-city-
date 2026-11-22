@@ -1,6 +1,7 @@
 // CPU-side geometry builder. Produces interleaved [pos3, normal3, color3] vertex data
 // so many objects can be merged into one buffer (one draw call).
 import { type Mat4, identity, mat4 } from './math';
+import { matOf } from './materials';
 
 export type RGB = [number, number, number];
 
@@ -21,6 +22,8 @@ export function shade(c: RGB, f: number): RGB {
 
 export class MeshBuilder {
   data: number[] = [];
+  /** Material for the following vertices (materials.ts MAT); -1 = by colour (tagColour), else 0. */
+  mat = -1;
   private m: Mat4 = mat4();
   private hasTransform = false;
 
@@ -39,7 +42,9 @@ export class MeshBuilder {
     return this;
   }
 
-  private v(x: number, y: number, z: number, nx: number, ny: number, nz: number, c: RGB): void {
+  private v(x: number, y: number, z: number, nx: number, ny: number, nz: number, c: RGB, mat?: number): void {
+    // the material id travels in the normal's length (|n| = 1 + id)
+    const k = 1 + (mat ?? (this.mat >= 0 ? this.mat : matOf(c)));
     if (this.hasTransform) {
       const m = this.m;
       const px = m[0] * x + m[4] * y + m[8] * z + m[12];
@@ -48,11 +53,12 @@ export class MeshBuilder {
       let tx = m[0] * nx + m[4] * ny + m[8] * nz;
       let ty = m[1] * nx + m[5] * ny + m[9] * nz;
       let tz = m[2] * nx + m[6] * ny + m[10] * nz;
-      const l = Math.hypot(tx, ty, tz) || 1;
+      const l = (Math.hypot(tx, ty, tz) || 1) / k;
       tx /= l; ty /= l; tz /= l;
       this.data.push(px, py, pz, tx, ty, tz, c[0], c[1], c[2]);
     } else {
-      this.data.push(x, y, z, nx, ny, nz, c[0], c[1], c[2]);
+      const l = (Math.hypot(nx, ny, nz) || 1) / k;
+      this.data.push(x, y, z, nx / l, ny / l, nz / l, c[0], c[1], c[2]);
     }
   }
 
@@ -66,6 +72,13 @@ export class MeshBuilder {
     this.v(a[0], a[1], a[2], nx, ny, nz, col);
     this.v(b[0], b[1], b[2], nx, ny, nz, col);
     this.v(c[0], c[1], c[2], nx, ny, nz, col);
+  }
+
+  /** Triangle with per-vertex (smooth) normals; the winding still decides the front face. */
+  triN(a: number[], b: number[], c: number[], na: number[], nb: number[], nc: number[], col: RGB): void {
+    this.v(a[0], a[1], a[2], na[0], na[1], na[2], col);
+    this.v(b[0], b[1], b[2], nb[0], nb[1], nb[2], col);
+    this.v(c[0], c[1], c[2], nc[0], nc[1], nc[2], col);
   }
 
   quad(a: number[], b: number[], c: number[], d: number[], col: RGB): void {
@@ -140,7 +153,8 @@ export class MeshBuilder {
   append(other: MeshBuilder): void {
     for (let i = 0; i < other.data.length; i += 9) {
       const d = other.data;
-      this.v(d[i], d[i + 1], d[i + 2], d[i + 3], d[i + 4], d[i + 5], [d[i + 6], d[i + 7], d[i + 8]]);
+      const mat = Math.round(Math.hypot(d[i + 3], d[i + 4], d[i + 5])) - 1;
+      this.v(d[i], d[i + 1], d[i + 2], d[i + 3], d[i + 4], d[i + 5], [d[i + 6], d[i + 7], d[i + 8]], Math.max(0, mat));
     }
   }
 

@@ -4,6 +4,7 @@
 // the references used and which details are observed vs approximated.
 import { MeshBuilder, hex, type RGB } from '../../engine/geometry';
 import { UI_FONT } from '../../engine/text';
+import { MAT, tagColour } from '../../engine/materials';
 
 export interface LandmarkModelData {
   id: string;
@@ -59,6 +60,21 @@ const C = {
   extGlass: hex('#66757f'),
   extMullion: hex('#b9b09b'),
 };
+
+for (const c of [C.mullion, C.transom, C.bronze, C.extMullion]) tagColour(c, MAT.BRONZE);
+for (const c of [C.spandrel, C.extSpandrel]) tagColour(c, MAT.ENAMEL);
+for (const c of [C.slab, C.white]) tagColour(c, MAT.STUCCO);
+for (const c of [C.canopy, C.railing]) tagColour(c, MAT.METAL);
+const RISER = tagColour(hex('#1b1c1e'), MAT.METAL);
+const LOBBY = tagColour(hex('#c9c0ae'), MAT.STONE);
+
+/**
+ * Entrances (arc length along the facade): the doors at the centre of the curved corner and under the
+ * "PETER JONES" letters on the Sloane Square front, both seen in the reference photographs (kr/142,
+ * kr/035; revolving door in kr/225). Positions and lobby sizes are approximate.
+ */
+const ENTRANCES = [86, 108];
+const ENTRANCE_W = 4.2;
 
 type P2 = [number, number];
 const pairs = (f: number[]): P2[] => { const o: P2[] = []; for (let i = 0; i < f.length; i += 2) o.push([f[i], f[i + 1]]); return o; };
@@ -229,14 +245,63 @@ export function buildPeterJones(b: MeshBuilder, m: LandmarkModelData): { top: nu
   flat(b, m.ringTris, CW_TOP, C.roof);
   flat(b, m.recessTris, RECESS_TOP, C.roof);
 
-  // ---- ground floor: plate glass set back beneath a cantilevered canopy with bronze trim (listing; photos)
-  strip(b, f, 0, L, -0.8, 0, SHOP_TOP, C.shop, 0.75);
-  for (const s of f.samples(1.5, L - 1.5, 3.0)) {
-    fin(b, f, s, 0.25, 0.12, 0, SHOP_TOP, C.bronze, -0.8);
-    // warm display lighting behind the glass in alternate bays
-    if (Math.floor(s / 3) % 2 === 0) strip(b, f, s + 0.3, Math.min(L, s + 2.6), -0.75, 0.6, 3.6, C.shopLit, 1.2);
+  // ---- ground floor (photos kr/029, kr/077, kr/142): plate-glass display windows in slim bronze frames
+  // over a black stall riser, set back under the cantilevered canopy; the displays are lit, each a little
+  // different; recessed entrances with revolving doors at the corner and on the Sloane Square front
+  const inEntrance = (s: number) => ENTRANCES.some((e) => Math.abs(s - e) < ENTRANCE_W / 2);
+  const bayW = 3.0;
+  for (let s0 = 0; s0 < L - 0.01; s0 += bayW) {
+    const s1 = Math.min(L, s0 + bayW);
+    if (inEntrance((s0 + s1) / 2)) continue;
+    const k = Math.floor(s0 / bayW);
+    // displays vary bay to bay (generic lit merchandise colours, not a record of actual displays)
+    const DISPLAY: RGB[] = [C.shopLit, [0.86, 0.78, 0.74], [0.74, 0.8, 0.86], [0.9, 0.86, 0.76], [0.62, 0.5, 0.42], [0.82, 0.82, 0.8]];
+    const lit = mix(C.shop, DISPLAY[Math.floor(hashf(k, 11) * DISPLAY.length)], 0.45 + 0.4 * hashf(k, 7));
+    b.mat = MAT.SHOPGLASS;
+    strip(b, f, s0, s1, -0.8, 0.5, 3.55, mix(lit, [0.78, 0.7, 0.62], 0.25 * hashf(k, 3)), 0.75);
+    strip(b, f, s0, s1, -0.8, 3.65, SHOP_TOP, mix(C.shop, C.sky, 0.25), 0.75); // top lights
+    b.mat = -1;
+    strip(b, f, s0, s1, -0.78, 0, 0.5, RISER, 0.75);
+    strip(b, f, s0, s1, -0.76, 3.55, 3.65, C.bronze, 0.75); // transom
   }
-  band(b, f, 0, L, -0.8, 2.2, SHOP_TOP, C.canopy, true); // canopy soffit
+  for (const s of f.samples(1.5, L - 1.5, 3.0)) if (!inEntrance(s)) fin(b, f, s, 0.12, 0.1, 0, SHOP_TOP, C.bronze, -0.8);
+  for (const e of ENTRANCES) {
+    if (e + ENTRANCE_W / 2 > L) continue;
+    const a = e - ENTRANCE_W / 2, c = e + ENTRANCE_W / 2, depth = 2.6;
+    // lobby: reveals, ceiling, back wall with the revolving door drum
+    const P = (s: number, o: number): P2 => { const p = f.at(s); return [p.x + p.nx * o, p.z + p.nz * o]; };
+    for (const [s, dir] of [[a, 1], [c, -1]] as const) {
+      const q0 = P(s, -0.8), q1 = P(s, -0.8 - depth);
+      void dir; // both faces: the reveals are seen from either side of the lobby
+      b.quad([q1[0], 0, q1[1]], [q0[0], 0, q0[1]], [q0[0], SHOP_TOP, q0[1]], [q1[0], SHOP_TOP, q1[1]], LOBBY);
+      b.quad([q0[0], 0, q0[1]], [q1[0], 0, q1[1]], [q1[0], SHOP_TOP, q1[1]], [q0[0], SHOP_TOP, q0[1]], LOBBY);
+      fin(b, f, s, 0.3, 0.12, 0, SHOP_TOP, C.bronze, -0.8);
+    }
+    strip(b, f, a, c, -0.8 - depth, 0, SHOP_TOP, mix(C.shop, C.shopLit, 0.2), 0.5);
+    strip(b, f, a, c, -0.8 - depth, 0, SHOP_TOP, mix(C.shop, C.shopLit, 0.2), 0.5, true);
+    band(b, f, a, c, -0.8 - depth, -0.8, SHOP_TOP - 0.01, C.white, true, 0.5);
+    band(b, f, a, c, -0.8 - depth, -0.8, 0.02, RISER, false, 0.5);
+    // revolving door: glass drum with bronze canopy and four leaves
+    const m = f.at(e), cx = m.x - m.nx * (0.8 + depth - 1.15), cz = m.z - m.nz * (0.8 + depth - 1.15);
+    b.mat = MAT.SHOPGLASS;
+    for (let i = 0; i < 12; i++) {
+      const a0 = (i / 12) * Math.PI * 2, a1 = ((i + 1) / 12) * Math.PI * 2;
+      if (i % 6 === 2 || i % 6 === 3) continue; // open quarters
+      b.quad([cx + Math.cos(a1) * 1.05, 0, cz + Math.sin(a1) * 1.05], [cx + Math.cos(a0) * 1.05, 0, cz + Math.sin(a0) * 1.05], [cx + Math.cos(a0) * 1.05, 2.5, cz + Math.sin(a0) * 1.05], [cx + Math.cos(a1) * 1.05, 2.5, cz + Math.sin(a1) * 1.05], mix(C.shop, C.shopLit, 0.4));
+    }
+    b.mat = -1;
+    b.cylinder(cx, cz, 2.5, 2.75, 1.12, 16, C.bronze);
+    for (let i = 0; i < 4; i++) {
+      const ang = (i / 4) * Math.PI * 2 + 0.4;
+      const ex = cx + Math.cos(ang) * 1.0, ez = cz + Math.sin(ang) * 1.0;
+      b.quad([cx, 0.05, cz], [ex, 0.05, ez], [ex, 2.45, ez], [cx, 2.45, cz], C.bronze);
+      b.quad([ex, 0.05, ez], [cx, 0.05, cz], [cx, 2.45, cz], [ex, 2.45, ez], C.bronze);
+    }
+  }
+  // canopy soffit, drawn with both windings (the facade outline's direction varies along the curve)
+  band(b, f, 0, L, -0.8, 2.2, SHOP_TOP, C.canopy, true);
+  band(b, f, 0, L, -0.8, 2.2, SHOP_TOP, C.canopy, false);
+  strip(b, f, 0, L, -0.8, SHOP_TOP, CANOPY_TOP, C.canopy, 0.75); // wall above the shopfronts, inside the canopy
   band(b, f, 0, L, -0.8, 2.2, CANOPY_TOP, C.canopy); // canopy top
   strip(b, f, 0, L, 2.2, SHOP_TOP, CANOPY_TOP - 0.65, C.canopy); // dark fascia
   strip(b, f, 0, L, 2.2, CANOPY_TOP - 0.65, CANOPY_TOP, C.bronze); // bronze/gold sign band
@@ -258,11 +323,15 @@ export function buildPeterJones(b: MeshBuilder, m: LandmarkModelData): { top: nu
       const pw = (s1 - s0) / n;
       for (let k = 0; k < n; k++) {
         const t = 0.12 + 0.35 * hashf(k, r) + (ext ? 0 : r * 0.05);
-        strip(b, f, s0 + k * pw, s0 + (k + 1) * pw, 0.02, y + PANEL_H, y + ROW_H, mix(glass, C.sky, Math.min(0.75, t)), pw);
+        // a few panes show pale blinds behind them (photos kr/029, kr/035)
+        const blind = hashf(k * 3 + 1, r * 7 + 2) < 0.16 ? 0.55 : 0;
+        b.mat = MAT.PJGLASS;
+        strip(b, f, s0 + k * pw, s0 + (k + 1) * pw, -0.03, y + PANEL_H, y + ROW_H, mix(mix(glass, C.sky, Math.min(0.75, t)), [0.86, 0.82, 0.72], blind), pw);
+        b.mat = -1;
       }
       // horizontal glazing bars at the panel joints: slim, so the vertical mullions dominate (photos)
       for (const ty of [y, y + PANEL_H]) strip(b, f, s0, s1, 0.06, ty - 0.035, ty + 0.035, ext ? C.extMullion : C.transom, 0.75);
-      strip(b, f, s0, s1, 0.04, y + PANEL_H * 2 - 0.02, y + PANEL_H * 2 + 0.02, mix(glass, C.sky, 0.6), 0.75);
+      strip(b, f, s0, s1, 0.04, y + PANEL_H * 2 - 0.02, y + PANEL_H * 2 + 0.02, C.transom, 0.75);
     }
     // vertical mullions at the panel module, full height of the curtain wall
     const n = Math.max(1, Math.round((s1 - s0) / PANEL_W));
@@ -274,7 +343,9 @@ export function buildPeterJones(b: MeshBuilder, m: LandmarkModelData): { top: nu
   // ---- recessed top storey: glazing under the cantilevered slab, white wall above it where the slab is low
   const inset = new Facade(m.recessRing.slice(0, m.facade.length)); // recessRing starts with the inset facade
   const k = inset.length / L; // map facade s → inset s
+  b.mat = MAT.PJGLASS;
   strip(b, inset, 0, inset.length, 0, CW_TOP, (s) => slabUnder(s / k), C.glass, 0.75);
+  b.mat = -1;
   for (const s of inset.samples(0, inset.length, PANEL_W * 2)) fin(b, inset, s, 0.08, 0.1, CW_TOP, slabUnder(s / k), C.railing);
   strip(b, inset, 0, inset.length, 0, (s) => slabUnder(s / k) + SLAB_T, RECESS_TOP, C.white, 0.75);
   // the sweeping slab (S-curve), cantilevered past the curtain wall
@@ -306,7 +377,9 @@ export function buildPeterJones(b: MeshBuilder, m: LandmarkModelData): { top: nu
     if (len < 1.2) {
       // short edges belong to the drum: glaze them as a continuous band
       const nx = -(c[1] - a[1]) / (len || 1) * 0.05, nz = (c[0] - a[0]) / (len || 1) * 0.05;
+      b.mat = MAT.GLASS;
       b.quad([a[0] + nx, RECESS_TOP + 0.9, a[1] + nz], [c[0] + nx, RECESS_TOP + 0.9, c[1] + nz], [c[0] + nx, UPPER_TOP - 0.8, c[1] + nz], [a[0] + nx, UPPER_TOP - 0.8, a[1] + nz], C.glass);
+      b.mat = -1;
     }
   }
   flat(b, m.upperTris, UPPER_TOP, C.slab);

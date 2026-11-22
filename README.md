@@ -240,6 +240,17 @@ Each building's configuration combines three sources: the street's photographed 
 
 The coverage table, endpoints, remaining gaps, performance and a headset checklist are in [docs/side-streets.md](docs/side-streets.md).
 
+### Sloane Square realism pass (branch `sq-realism`)
+
+The area around the Venus Fountain and Peter Jones has these changes:
+- **Lighting:** colour-managed linear lighting with tone mapping, and baked sun shadows and contact shading.
+- **Materials:** brick, stone, paving and asphalt surfaces from CC0 textures (Poly Haven), and reflective glass.
+- **Peter Jones:** an upgraded façade and shopfronts.
+- **Trees:** more natural planes.
+- **Fountain:** translucent falling water.
+
+Before/after screenshots, the asset licences, desktop measurements and a headset test procedure are in [docs/sloane-square-realism.md](docs/sloane-square-realism.md).
+
 ## Install, run, build
 
 Requires **Node.js 20+**.

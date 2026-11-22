@@ -1,6 +1,7 @@
 // The geographically grounded map, built from the bundled OpenStreetMap extract
 // (src/map/osm/chelsea-osm.json, produced by scripts/osm/process.mjs). No runtime requests.
 import data from './osm/chelsea-osm.json';
+import './materialTags';
 import type { MapLabelDef, SceneMap } from './types';
 import { MeshBuilder, hex, rng, shade, type RGB } from '../engine/geometry';
 import { P, tree } from './palette';
