@@ -10,6 +10,7 @@ import { bays, facing, flatLid, fronts, longest, plainGrid, sign, slopedRoof, wa
 import { DOY_BUILDERS } from './dukeOfYork';
 import { buildKr, withCorridorLine } from './kingsRoad';
 import { SS_SPECS } from './sloaneStreetSpecs';
+import { SD_SPECS } from './sideStreetSpecs';
 import { SS_HOOKS } from './sloaneStreetHooks';
 const CORRIDOR_HOOKS = { ...KR_HOOKS, ...SS_HOOKS };
 import { KR_SPECS } from './kingsRoadSpecs';
@@ -717,6 +718,14 @@ export const SQUARE_MODELS = Object.keys(BUILDERS).filter((k) => k.startsWith('s
 export const DOY_MODELS = Object.keys(DOY_BUILDERS);
 
 /** Builds every reconstructed perimeter building into `b`; returns the sign quads for the atlas. */
+/** True for footprints rebuilt as street-corridor models (drawn with two levels of detail). */
+export const isCorridorModel = (custom?: string | null): boolean => !!custom && /^(kr|ss|ls|sd):/.test(custom);
+/** The configuration of a street-corridor model (for its far, simplified version). */
+export function corridorSpec(custom: string): import('./kingsRoad').KrSpec | undefined {
+  const cor = custom.slice(0, 2), key = custom.slice(3).replace(/-\d+$/, '');
+  return cor === 'kr' ? KR_SPECS[key] : cor === 'sd' ? SD_SPECS[key] : SS_SPECS[key];
+}
+
 export function buildSquareBuildings(b: MeshBuilder, buildings: SquareBuildingFootprint[], roofs: Record<string, RoofInsets>, squareRing: number[], all: SquareBuildingFootprint[] = buildings): { signs: SignQuad[]; built: string[]; triangles: Record<string, number> } {
   const bbox = (o: SquareBuildingFootprint) => { const r = o.rings[0]; let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9; for (let i = 0; i < r.length; i += 2) { x0 = Math.min(x0, r[i]); x1 = Math.max(x1, r[i]); z0 = Math.min(z0, r[i + 1]); z1 = Math.max(z1, r[i + 1]); } return [x0, x1, z0, z1]; };
   const near = (o: SquareBuildingFootprint, p: SquareBuildingFootprint) => { const a = bbox(o), q = bbox(p); return a[0] < q[1] + 3 && a[1] > q[0] - 3 && a[2] < q[3] + 3 && a[3] > q[2] - 3; };
@@ -726,10 +735,12 @@ export function buildSquareBuildings(b: MeshBuilder, buildings: SquareBuildingFo
   const triangles: Record<string, number> = {};
   for (const bl of buildings) {
     // street corridors: King's Road ('kr:'), Sloane Street ('ss:'), Lower Sloane Street ('ls:')
-    const cor = /^(kr|ss|ls):/.exec(bl.custom ?? '')?.[1];
+    const cor = /^(kr|ss|ls|sd):/.exec(bl.custom ?? '')?.[1];
     const key = bl.custom?.slice(3).replace(/-\d+$/, '') ?? '';
-    const krSpec = cor === 'kr' ? KR_SPECS[key] : cor ? SS_SPECS[key] : undefined;
-    const fn = bl.custom ? (krSpec ? (c: Ctx) => { withCorridorLine(cor!, () => buildKr(c, krSpec, CORRIDOR_HOOKS)); } : BUILDERS[bl.custom]) : undefined;
+    const krSpec = cor === 'kr' ? KR_SPECS[key] : cor === 'sd' ? SD_SPECS[key] : cor ? SS_SPECS[key] : undefined;
+    // side streets each have their own centreline ('cor' on the footprint)
+    const lineId = cor === 'sd' ? (bl as { cor?: string }).cor ?? 'sd' : cor;
+    const fn = bl.custom ? (krSpec ? (c: Ctx) => { withCorridorLine(lineId!, () => buildKr(c, krSpec, CORRIDOR_HOOKS)); } : BUILDERS[bl.custom]) : undefined;
     if (!fn) continue;
     const before = b.vertexCount;
     const others = all.filter((o) => o.id !== bl.id && near(o, bl)).map((o) => o.rings[0]);

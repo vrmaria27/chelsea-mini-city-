@@ -12,8 +12,8 @@
 import { readFileSync } from 'node:fs';
 
 /** Chains the named primary-road ways into one line, starting from the end nearest `from`. */
-export function chainLine(ways, P, name, from, keep = () => true, skipWays = []) {
-  const parts = ways.filter((w) => w.tags?.name === name && w.tags.highway === 'primary' && !skipWays.includes(w.id)).map((w) => w.geometry.map(P));
+export function chainLine(ways, P, name, from, keep = () => true, skipWays = [], hwRe = /^primary$/) {
+  const parts = ways.filter((w) => w.tags?.name === name && hwRe.test(w.tags.highway ?? '') && !skipWays.includes(w.id)).map((w) => w.geometry.map(P));
   const same = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.05;
   const ends = parts.flatMap((p) => [p[0], p[p.length - 1]]);
   const start = typeof from === 'function' ? ends.reduce((m, q) => (from(q) > from(m) ? q : m)) : ends.reduce((m, q) => (Math.hypot(q[0] - from[0], q[1] - from[1]) < Math.hypot(m[0] - from[0], m[1] - from[1]) ? q : m));
@@ -110,9 +110,9 @@ export class Corridor {
         const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], q = this.near(m[0], m[1]);
         const to = [(q.p[0] - m[0]) / (q.d || 1), (q.p[1] - m[1]) / (q.d || 1)];
         const maxD = (this.include ?? []).includes(bl.id) ? 40 : this.frontD;
-        if (q.d < maxD && nx * to[0] + nz * to[1] > 0.6 && q.s > (this.frontFrom ?? 3) && q.s < this.endS) { if (!best || q.d < best.d) best = { d: q.d, s: q.s, len }; }
+        if (q.d < maxD && nx * to[0] + nz * to[1] > 0.6 && q.s > (this.frontFrom ?? 3) && q.s < (this.frontTo ?? this.endS)) { if (!best || q.d < best.d) best = { d: q.d, s: q.s, len, right: q.t[0] * (m[1] - q.p[1]) - q.t[1] * (m[0] - q.p[0]) > 0 }; }
       }
-      if (best) { bl.custom = `${this.prefix}:${bl.id}`; this.frontages.push({ id: bl.id, s: round1(best.s), d: round1(best.d) }); }
+      if (best) { bl.custom = `${this.prefix}:${bl.id}`; if (this.prefix === 'sd') bl.cor = this.id; this.frontages.push({ id: bl.id, s: round1(best.s), d: round1(best.d), ...(this.prefix === 'sd' ? { len: round1(best.len), right: best.right } : {}) }); }
     }
     // shop polygons drawn inside a larger frontage building are units of that building, not buildings
     const pin = (x, z, r) => { let ins = false; for (let i = 0, j = r.length / 2 - 1; i < r.length / 2; j = i++) { const xi = r[2 * i], zi = r[2 * i + 1], xj = r[2 * j], zj = r[2 * j + 1]; if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) ins = !ins; } return ins; };
@@ -129,9 +129,18 @@ export class Corridor {
   }
 
   /** Step 3: fit the carriageway between the building lines (see the module comment). */
-  fitCarriageway(buildings, areas, roads, round1) {
+  fitCarriageway(buildings, areas, roads, round1, extraLines = []) {
     const { minPave, maxW, minW } = this;
     const STEP = 5, s0 = this.fitFrom, s1 = this.fitTo ?? this.endS + 60;
+    // a straight street mapped with two vertices could only move at its ends: add a vertex every
+    // `densify` metres (to the centreline and to the road ways of the same name) so the fit follows
+    if (this.densify) {
+      const dens = (pts) => { const out = [pts[0]]; for (let i = 1; i < pts.length; i++) { const a = pts[i - 1], b = pts[i], L = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.ceil(L / this.densify); for (let k = 1; k < n; k++) out.push([round1(a[0] + ((b[0] - a[0]) * k) / n), round1(a[1] + ((b[1] - a[1]) * k) / n)]); out.push(b); } return out; };
+      this.line.splice(0, this.line.length, ...dens(this.line));
+      this.recompute();
+      for (const r of roads) if (r.name === this.name && !r.wv) { const q = []; for (let i = 0; i < r.pts.length; i += 2) q.push([r.pts[i], r.pts[i + 1]]); r.pts = dens(q).flat(); }
+    }
+    const rampIn = this.rampIn ?? 20;
     const R = [], Lf = [];
     for (let s = s0; s <= s1; s += STEP) { R.push(Infinity); Lf.push(Infinity); }
     // nearest building edge on each side, sampled along every footprint edge; garden railings front the
@@ -170,7 +179,7 @@ export class Corridor {
       const total = Rf[i] + Lff[i];
       const w = Math.max(minW, Math.min(maxW, total - 2 * minPave));
       let shift = (Rf[i] - Lff[i]) / 2; // + = toward the right-hand line
-      const f = Math.max(0, Math.min(1, (s - s0) / 20, (s1 - s) / 40));
+      const f = Math.max(0, Math.min(1, (s - s0) / rampIn, (s1 - s) / 40));
       shift = Math.max(-(this.maxShift ?? 3), Math.min(this.maxShift ?? 3, shift)) * f;
       prof.push({ s, shift: round1(shift), w: round1(maxW + (w - maxW) * f), R: round1(Rf[i]), L: round1(Lff[i]) });
     }
@@ -184,6 +193,8 @@ export class Corridor {
       return [x + n[0] * shift * wgt, z + n[1] * shift * wgt];
     };
     const newLine = this.line.map((p) => moved(p[0], p[1]) ?? p);
+    // other centrelines that share road vertices with this street (side streets) move with it
+    for (const L of extraLines) for (const p of L) { const m = moved(p[0], p[1]); if (m) { p[0] = round1(m[0]); p[1] = round1(m[1]); } }
     for (const r of roads) {
       const isOwn = r.name === this.name;
       let touched = false;
@@ -199,6 +210,12 @@ export class Corridor {
     this.line.splice(0, this.line.length, ...newLine);
     for (let i = 1; i < this.line.length; i++) this.cum[i] = this.cum[i - 1] + Math.hypot(this.line[i][0] - this.line[i - 1][0], this.line[i][1] - this.line[i - 1][1]);
     return { minPavement: minPave, maxShift: Math.max(...prof.map((p) => Math.abs(p.shift))), minWidth: Math.min(...prof.map((p) => p.w)) };
+  }
+
+  /** Recomputes the chainage after the line was moved by another corridor's fit. */
+  recompute() {
+    this.cum = [0];
+    for (let i = 1; i < this.line.length; i++) this.cum.push(this.cum[i - 1] + Math.hypot(this.line[i][0] - this.line[i - 1][0], this.line[i][1] - this.line[i - 1][1]));
   }
 
   prof(s) {
@@ -223,6 +240,7 @@ export class Corridor {
       sStart: this.startS,
       sEnd: this.endS,
       ...(this.paveFrom != null ? { paveFrom: this.paveFrom } : {}),
+      ...(this.band != null ? { band: this.band, paveW: this.paveW, pedestrian: this.pedestrian, ...(this.shared ? { shared: true } : {}) } : {}),
       end: [...r1([endP.p[0] - nEnd[0] * hwEnd, endP.p[1] - nEnd[1] * hwEnd]), ...r1([endP.p[0] + nEnd[0] * hwEnd, endP.p[1] + nEnd[1] * hwEnd])],
       roadW: this.maxW,
       /** Carriageway width at each centreline vertex (fitted between the building lines). */

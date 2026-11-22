@@ -21,6 +21,10 @@ export const M = {
   stuccoGrey: hex('#dcdad3'),
   stuccoPink: hex('#ead2c6'),
   stuccoGreen: hex('#cfdccd'),
+  // painted brick terraces (Bywater Street)
+  paintBlue: hex('#8db2cc'),
+  paintYellow: hex('#e2cd78'),
+  paintMint: hex('#8fc8aa'),
   paintBlack: hex('#2a2c2f'),
   stock: hex('#c4ab7a'),
   stockDark: hex('#a8926a'),
@@ -111,6 +115,8 @@ export interface Ground {
   riser?: MatKey;
   /** Number of arches (arcade kind). */
   arches?: number;
+  /** Residential kind: mews garage doors in place of the ground-floor windows. */
+  garages?: boolean;
 }
 
 export interface KrSpec {
@@ -151,6 +157,8 @@ export interface KrSpec {
   returnBays?: number;
   /** Unique features drawn by a named hook after the standard composition. */
   extra?: string;
+  /** Individually painted houses along the main front (with extra: 'painted'): house width and colours. */
+  houses?: { w: number; cols: MatKey[] };
   /** Source notes (photographs, listing) and confidence, for the coverage table. */
   src: string;
   conf: 'observed' | 'partly' | 'estimated';
@@ -542,6 +550,10 @@ function groundFloor(fr: F, u0: number, u1: number, y0: number, y1: number, spec
         fr.wall(uc - dw / 2, uc + dw / 2, y0 + 0.3, y0 + dh, M.frameDark, 0.02);
         fr.wall(uc - dw / 2, uc + dw / 2, y0 + dh - 0.55, y0 + dh, M.glass, 0.03);
         for (let k = 0; k < 2; k++) fr.box(uc - dw / 2 - 0.2, uc + dw / 2 + 0.2, y0 + k * 0.15, y0 + (k + 1) * 0.15, 0, 0.25 + (2 - k) * 0.28, M.stone, true, false);
+      } else if (g.garages) {
+        const gw = Math.min(2.6, w * 0.8), gh = Math.min(2.4, y1 - y0 - 0.6);
+        fr.wall(uc - gw / 2, uc + gw / 2, y0, y0 + gh, M.frameDark, 0.03);
+        fr.box(uc - gw / 2 - 0.08, uc + gw / 2 + 0.08, y0 + gh, y0 + gh + 0.12, 0, 0.05, shade(base, 0.9), false, false);
       } else {
         const ww = Math.min(1.05, w * 0.4);
         sash(fr, uc, y0 + 0.9, ww, (y1 - y0) * 0.5, { surround: 'stone', bars: 1 }, base);
@@ -566,6 +578,9 @@ export interface KrData {
   name?: string;
   /** Chainage where the raised corridor pavement begins (it ramps up from the square's pavement level). */
   paveFrom?: number;
+  /** Rendered pavement band beyond the kerb (m, default 11); a pedestrian street has no kerb. */
+  paveW?: number;
+  pedestrian?: boolean;
   /** Chainage where the corridor starts (it overlaps the Sloane Square zone). */
   sStart: number;
   trees: { x: number; z: number; osm: string; genus: string | null }[];
@@ -582,7 +597,7 @@ export interface KrData {
 }
 
 /** Pavement (flags with joints and a granite kerb) along both sides of King's Road, at KR_PAVE. */
-export function buildKrStreet(b: MeshBuilder, d: KrData, roads: { pts: number[]; w: number; name: string | null; cls: string }[], insideBuilding: (x: number, z: number) => boolean): { tris: number } {
+export function buildKrStreet(b: MeshBuilder, d: KrData, roads: { pts: number[]; w: number; name: string | null; cls: string }[], insideBuilding: (x: number, z: number) => boolean, avoid: (x: number, z: number) => boolean = () => false): { tris: number } {
   const before = b.vertexCount;
   const line: Pt[] = [];
   for (let i = 0; i + 1 < d.line.length; i += 2) line.push([d.line[i], d.line[i + 1]]);
@@ -590,8 +605,10 @@ export function buildKrStreet(b: MeshBuilder, d: KrData, roads: { pts: number[];
   const sideRoads = roads.filter((r) => r.name !== own && (r.cls === 'street' || r.cls === 'service' || r.cls === 'main'));
   const inSide = (x: number, z: number) => sideRoads.some((r) => { for (let i = 0; i + 3 < r.pts.length; i += 2) if (segD(x, z, r.pts[i], r.pts[i + 1], r.pts[i + 2], r.pts[i + 3]) < r.w / 2 + 0.2) return true; return false; });
   const excluded = (x: number, z: number) => d.excl.some((r) => inRingFlat(x, z, r));
-  const W = 11; // pavement band (m beyond the kerb); building footprints hide the part inside them
-  const step = 0.9;
+  const W = d.paveW ?? 11; // pavement band (m beyond the kerb); building footprints hide the part inside them
+  // narrow side-street pavements: longer pieces, one strip per run (the same layout for far fewer triangles)
+  const coarse = W <= 4;
+  const step = coarse ? 1.8 : 0.9;
   // walk the centreline in steps; each step lays two strips of flags per side
   let acc = 0;
   const segs: { a: Pt; t: Pt; n: Pt; s0: number; L: number; ha: number; hb: number }[] = [];
@@ -622,9 +639,9 @@ export function buildKrStreet(b: MeshBuilder, d: KrData, roads: { pts: number[];
         // o is measured from the kerb line, which follows the fitted carriageway width
         const P = (t: number, o: number): number[] => { const oo = o + sg.ha + ((sg.hb - sg.ha) * t) / sg.L; return [sg.a[0] + sg.t[0] * t + sg.n[0] * oo * side, y, sg.a[1] + sg.t[1] * t + sg.n[1] * oo * side]; };
         const q = (A: number[], B: number[], C: number[], D: number[], col: RGB) => { if (side > 0) b.quad(A, D, C, B, col); else b.quad(A, B, C, D, col); };
-        const ok = (o0: number, o1: number) => { const m = P((t0 + t1) / 2, (o0 + o1) / 2); return !excluded(m[0], m[2]) && !inSide(m[0], m[2]) && !insideBuilding(m[0], m[2]); };
+        const ok = (o0: number, o1: number) => { const m = P((t0 + t1) / 2, (o0 + o1) / 2); return !excluded(m[0], m[2]) && !inSide(m[0], m[2]) && !insideBuilding(m[0], m[2]) && !avoid(m[0], m[2]); };
         // granite kerb with its face down to the carriageway
-        if (ok(0, kerbW)) {
+        if (!d.pedestrian && ok(0, kerbW)) {
           q(P(t0, 0), P(t1, 0), P(t1, kerbW), P(t0, kerbW), M.kerb);
           const A0 = P(t0, 0), B0 = P(t1, 0); A0[1] = B0[1] = Math.min(0.36, y - 0.06);
           if (side > 0) b.quad(B0, A0, P(t0, 0), P(t1, 0), shade(M.kerb, 0.8)); else b.quad(A0, B0, P(t1, 0), P(t0, 0), shade(M.kerb, 0.8));
@@ -635,14 +652,17 @@ export function buildKrStreet(b: MeshBuilder, d: KrData, roads: { pts: number[];
           const o0 = kerbW + c * CELL, o1 = Math.min(W, o0 + CELL);
           const good = c < nCells && ok(o0, o1);
           if (good) {
-            q(P(t0, o0), P(t1, o0), P(t1, o1), P(t0, o1), (c + k) % 4 === 0 ? shade(M.pave, 0.97) : (c * 3 + k) % 7 === 0 ? shade(M.pave, 1.03) : M.pave);
-            if (c > 0 && run0 >= 0) q(up(P(t0, o0 - 0.015)), up(P(t1, o0 - 0.015)), up(P(t1, o0 + 0.015)), up(P(t0, o0 + 0.015)), M.paveJoint);
+            if (!coarse) {
+              q(P(t0, o0), P(t1, o0), P(t1, o1), P(t0, o1), (c + k) % 4 === 0 ? shade(M.pave, 0.97) : (c * 3 + k) % 7 === 0 ? shade(M.pave, 1.03) : M.pave);
+              if (c > 0 && run0 >= 0) q(up(P(t0, o0 - 0.015)), up(P(t1, o0 - 0.015)), up(P(t1, o0 + 0.015)), up(P(t0, o0 + 0.015)), M.paveJoint);
+            }
             if (run0 < 0) run0 = c;
           }
           if ((!good || c === nCells) && run0 >= 0) {
             // transverse joints across the run (two per strip, staggered by course would cost more)
             const ra = kerbW + run0 * CELL, rb = Math.min(W, kerbW + c * CELL);
-            for (const tj of [t0, (t0 + t1) / 2]) { const J = (o: number, dt: number) => { const p = P(tj + dt, o); p[1] = y + 0.004; return p; }; q(J(ra, 0), J(ra, 0.03), J(rb, 0.03), J(rb, 0), M.paveJoint); }
+            if (coarse) q(P(t0, ra), P(t1, ra), P(t1, rb), P(t0, rb), k % 3 === 0 ? shade(M.pave, 0.98) : M.pave);
+            for (const tj of coarse ? [t0] : [t0, (t0 + t1) / 2]) { const J = (o: number, dt: number) => { const p = P(tj + dt, o); p[1] = y + 0.004; return p; }; q(J(ra, 0), J(ra, 0.03), J(rb, 0.03), J(rb, 0), M.paveJoint); }
             run0 = -1;
           }
         }

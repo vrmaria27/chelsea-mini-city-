@@ -83,12 +83,12 @@ test('heights and storeys match the documented inventory (map metres, before tab
   assert.ok(t('square:wyndham') > 22 && t('square:wyndham') < 30);
 });
 
-test('former game sites are ordinary buildings again (generic masses, or King\'s Road reconstructions)', () => {
+test('former game sites are ordinary buildings again (generic masses, or street-corridor reconstructions)', () => {
   const former = OSM.buildings.filter((b) => b.formerSite);
   assert.equal(former.length, 32);
   for (const b of former) {
     // sites on King's Road are now rebuilt from their own references like their neighbours
-    assert.ok(!b.custom || b.custom.startsWith('kr:'), `${b.id} replaced a landmark reconstruction`);
+    assert.ok(!b.custom || /^(kr|ss|ls|sd):/.test(b.custom), `${b.id} replaced a landmark reconstruction`);
     assert.ok(!b.protected, `${b.id} is protected`);
     assert.ok(Math.min(...ringPts(b.rings[0]).map((q) => distToRing(q[0], q[1], sqRing))) > 30, `${b.id} near the square`);
   }

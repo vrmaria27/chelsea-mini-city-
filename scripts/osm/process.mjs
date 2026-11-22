@@ -122,6 +122,8 @@ const openRing = (r) => (r.length > 1 && r[0][0] === r[r.length - 1][0] && r[0][
 const clippedRings = (rs, tol) => rs.map((r) => simplifyRing(clipRing(openRing(r), BOX), tol)).filter((r) => r.length >= 3 && Math.abs(ringArea(r)) > 1);
 
 function areaKind(t) {
+  // a gravelled public walk (Royal Avenue) is walked on like a square, not kept off like a lawn
+  if (t.landcover === 'gravel' || t.surface === 'gravel') return 'plaza';
   if (t.leisure === 'park' || t.leisure === 'garden' || t.leisure === 'common' || ['grass', 'village_green', 'recreation_ground'].includes(t.landuse)) return 'green';
   if (t.leisure === 'pitch' || t.leisure === 'playground') return 'green';
   if (t.place === 'square' || (t.highway === 'pedestrian' && t.area === 'yes') || t['area:highway'] === 'pedestrian' || t['area:highway'] === 'footway' || t.amenity === 'marketplace') return 'plaza';
@@ -143,7 +145,7 @@ for (const e of [...ways, ...rels]) {
     const tris = triangulate(o, holes);
     const a = Math.abs(ringArea(o)) - holes.reduce((n, h) => n + Math.abs(ringArea(h)), 0);
     if (Math.abs(trisArea(tris) - a) > 0.03 * a + 1) report.warnings.push(`area ${e.type}/${e.id} triangulation mismatch`);
-    areas.push({ id: `${e.type[0]}${e.id}`, kind, name: t.name ?? null, ring: o.flatMap((p) => [round1(p[0]), round1(p[1])]), tris: tris.map(round1) });
+    areas.push({ id: `${e.type[0]}${e.id}`, kind, ...((t.landcover ?? t.surface) === 'gravel' ? { surface: 'gravel' } : {}), name: t.name ?? null, ring: o.flatMap((p) => [round1(p[0]), round1(p[1])]), tris: tris.map(round1) });
   }
 }
 
@@ -234,6 +236,62 @@ const corridorLs = new Corridor({
   include: ['w899154922'],
 });
 corridorSs.replaceBuildings(ways, rels, P, keepLandmark, report);
+// ---- Side streets connecting the reconstructed areas (docs/side-streets.md) ----------------------------
+// Each in-scope street is a corridor from its junction with completed work ('from') to its end, the next
+// junction or the map edge (footprints cut by the edge are skipped). Ordered by the milestone's priorities:
+// around Peter Jones; King's Road ↔ Duke of York Square / Saatchi / Royal Avenue; Sloane Square station and
+// Lower Sloane Street; the remaining King's Road side streets. Markham Square is complete to the King's Road
+// boundary already (its corner buildings) and is not extended.
+const SIDE_STREETS = [
+  { id: 'symons', name: 'Symons Street', from: [99.4, -158.7] },
+  { id: 'culford', name: 'Culford Gardens', from: [57.2, -151.7] },
+  { id: 'cadogan-gdns', name: 'Cadogan Gardens', from: [40.5, -62.9] },
+  { id: 'pavilion', name: 'Pavilion Road', from: [99.4, -158.7], hw: /^(pedestrian|residential|service|living_street)$/, shared: true },
+  { id: 'cadogan-gdns-n', name: 'Cadogan Gardens', from: [128.4, -329.8] },
+  { id: 'cheltenham', name: 'Cheltenham Terrace', from: [-86.9, 39.2] },
+  { id: 'franklins', name: 'Franklins Row', from: [34, 163.3] },
+  { id: 'turks', name: 'Turks Row', from: [207.8, 110.1] },
+  { id: 'royal-ave', name: 'Royal Avenue', from: [-154.8, 134.1] },
+  { id: 'walpole', name: 'Walpole Street', from: [-137.4, 82.6] },
+  { id: 'doy-lane', name: 'Duke of York Square', from: [124.4, -85.5], hw: /^pedestrian$/, pedestrian: true },
+  { id: 'holbein', name: 'Holbein Place', from: [225.8, -139.6], hw: /^(residential|unclassified|tertiary)$/ },
+  { id: 'sloane-gdns', name: 'Sloane Gardens', from: [201, 52] },
+  { id: 'holbein-mews', name: 'Holbein Mews', from: [207.4, 85.3], hw: /^(residential|unclassified|service)$/, shared: true },
+  { id: 'whittaker', name: 'Whittaker Street', from: [288.7, -29] },
+  { id: 'bourne', name: 'Bourne Street', from: [279.9, -222.9] },
+  { id: 'cliveden', name: 'Cliveden Place', from: [261.3, -209.5], hw: /^primary$/, maxW: 12 },
+  { id: 'sedding', name: 'Sedding Street', from: [224.7, -188.5] },
+  { id: 'sloane-tce', name: 'Sloane Terrace', from: [140.4, -260.7] },
+  { id: 'wilbraham', name: 'Wilbraham Place', from: [133.8, -298.8] },
+  { id: 'ellis', name: 'Ellis Street', from: [127.4, -335.8] },
+  { id: 'sloane-ct-e', name: 'Sloane Court East', from: [191.9, 127.5] },
+  { id: 'sloane-ct-w', name: 'Sloane Court West', from: [149.2, 172.8] },
+  { id: 'graham-tce', name: 'Graham Terrace', from: [298.3, 17] },
+  { id: 'blacklands', name: 'Blacklands Terrace', from: [-40.2, 3.1] },
+  { id: 'lincoln', name: 'Lincoln Street', from: [-59, 16.7] },
+  { id: 'anderson', name: 'Anderson Street', from: [-144.8, 89.3] },
+  { id: 'tryon', name: 'Tryon Street', from: [-174.4, 111.2], shared: true, minW: 3.6 },
+  { id: 'bywater', name: 'Bywater Street', from: [-244.4, 179.1] },
+  { id: 'wellington-sq', name: 'Wellington Square', from: [-232.2, 170.2] },
+  { id: 'smith', name: 'Smith Street', from: [-277.5, 202.5] },
+  { id: 'smith-tce', name: 'Smith Terrace', from: [-182.4, 305.1], shared: true },
+];
+const sideCorridors = SIDE_STREETS.map((d) => {
+  const line = chainLine(ways, P, d.name, d.from, () => true, [], d.hw ?? /^(residential|unclassified|tertiary|living_street)$/);
+  const cum = [0]; for (let i = 1; i < line.length; i++) cum.push(cum[i - 1] + Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]));
+  // stop 4 m inside the map edge where the street leaves the map
+  const k = line.findIndex((q) => Math.abs(q[0]) > HALF - 4 || Math.abs(q[1]) > HALF - 4);
+  let endS = cum[cum.length - 1];
+  if (k > 0) { const a = line[k - 1], b = line[k]; const ta = Math.max(Math.abs(a[0]), Math.abs(a[1])), tb = Math.max(Math.abs(b[0]), Math.abs(b[1])); endS = cum[k - 1] + ((HALF - 4 - ta) / ((tb - ta) || 1)) * (cum[k] - cum[k - 1]); }
+  return new Corridor({
+    id: `sd-${d.id}`, prefix: 'sd', name: d.name, line, startS: 0, endS: Math.max(5, endS - 1), rawFile: 'data/osm/sd-raw.json', buildingsFile: 'data/osm/sd-buildings.json',
+    replaceFrom: 18, frontFrom: 0, frontD: 12, minPave: d.pedestrian ? 0 : 1.6, maxW: d.pedestrian ? 0.2 : d.maxW ?? 7, minW: d.pedestrian ? 0.2 : d.minW ?? 4.6, maxShift: 2.5, fitFrom: 0, rampIn: 8, densify: 5, endHalf: 10,
+    pedestrian: !!d.pedestrian, shared: !!d.shared, band: d.pedestrian ? 4 : 4.5, paveW: d.pedestrian ? 4 : 4,
+  });
+});
+// footprints beside the main corridors keep the main corridors' (already newer) data
+const nearMain = (e) => { const g = e.geometry ?? e.members?.filter((m) => m.role === 'outer').flatMap((m) => m.geometry ?? []) ?? []; return g.some((q) => { const p = P(q); return [corridorKr, corridorSs, corridorLs].some((c) => c.near(p[0], p[1]).d < 25); }); };
+for (const c of sideCorridors) c.replaceBuildings(ways, rels, P, (e) => keepLandmark(e) || nearMain(e), report);
 corridorLs.replaceBuildings(ways, rels, P, keepLandmark, report);
 const PROTECTED_TAGS = (t) => !!(t.name && (t.building === 'church' || t.building === 'school' || t.building === 'retail' || t.tourism || t.amenity || t.historic)) || ['church', 'chapel', 'cathedral', 'train_station', 'transportation'].includes(t.building) || /Theatre|Gallery|Church|Hall|Station/.test(t.name ?? '');
 for (const e of [...ways, ...rels]) {
@@ -277,7 +335,7 @@ corridorKr.detectFrontages(buildings, ringArea, round1);
 report.kingsRoad = { frontages: corridorKr.frontages.length, replaced: corridorKr.replaced };
 // The OSM centreline west of Royal Avenue runs about 2.5 m nearer the south frontage than the north, and
 // the default 12 m carriageway then reaches the south façades: re-centre and narrow it between the lines.
-report.kingsRoad.carriageway = corridorKr.fitCarriageway(buildings, areas, roads, round1);
+report.kingsRoad.carriageway = corridorKr.fitCarriageway(buildings, areas, roads, round1, sideCorridors.map((c) => c.line));
 // Sloane Street and Lower Sloane Street frontages ('ss:<id>', 'ls:<id>', src/map/landmarks/sloaneStreetSpecs.ts)
 // footprints cut by the map's north edge stay plain massing (they cannot be completed within the map)
 const touchesEdge = (bl) => bl.rings[0].some((v) => Math.abs(v) >= HALF - 0.5);
@@ -286,8 +344,33 @@ corridorLs.detectFrontages(buildings, ringArea, round1);
 // Sloane Street's OSM centreline runs about 3.5 m east of the middle between the building lines (east
 // footprints ≈ 7.5 m from it, west ≈ 14.5 m), and Lower Sloane Street's reaches the Sloane Gardens garden
 // railings: both are re-centred between the lines like King's Road (docs/sloane-streets.md).
-const ssFit = corridorSs.fitCarriageway(buildings, areas, roads, round1);
-const lsFit = corridorLs.fitCarriageway(buildings, areas, roads, round1);
+const sideLines = sideCorridors.map((c) => c.line);
+const ssFit = corridorSs.fitCarriageway(buildings, areas, roads, round1, sideLines);
+const lsFit = corridorLs.fitCarriageway(buildings, areas, roads, round1, sideLines);
+// the legacy development sites (old saves) are analysed against the roads as they were before the side streets
+const roadsBeforeSide = roads.map((r) => ({ ...r, pts: r.pts.slice() }));
+// side streets: frontages (not already claimed by the main corridors or a landmark), then their carriageways
+for (const c of sideCorridors) { c.recompute(); c.detectFrontages(buildings, ringArea, round1, (bl) => !touchesEdge(bl)); }
+for (const c of sideCorridors) c.fitCarriageway(buildings, areas, roads, round1);
+// per-building OSM tags for the side-street configurations (address, levels, materials, shops inside)
+{
+  let sdEls = [];
+  try { sdEls = JSON.parse(readFileSync('data/osm/sd-buildings.json', 'utf8')).elements; } catch { /* reported by replaceBuildings */ }
+  const tagOf = new Map(sdEls.filter((e) => e.type !== 'node').map((e) => [`${e.type[0]}${e.id}`, e.tags ?? {}]));
+  const shops = sdEls.filter((e) => e.type === 'node' && e.tags && (e.tags.shop || e.tags.amenity || e.tags.office || e.tags.craft)).map((e) => ({ p: P(e), t: e.tags }));
+  const pin = (x, z, r) => { let ins = false; for (let i = 0, j = r.length / 2 - 1; i < r.length / 2; j = i++) { const xi = r[2 * i], zi = r[2 * i + 1], xj = r[2 * j], zj = r[2 * j + 1]; if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) ins = !ins; } return ins; };
+  for (const c of sideCorridors) for (const f of c.frontages) {
+    const t = tagOf.get(f.id.replace(/-\d+$/, '')) ?? {};
+    const bl = buildings.find((b) => b.id === f.id);
+    const inside = shops.filter((sh) => pin(sh.p[0], sh.p[1], bl.rings[0]));
+    Object.assign(f, {
+      addr: [t['addr:housenumber'], t['addr:street']].filter(Boolean).join(' ') || null, name: t.name ?? null,
+      levels: t['building:levels'] ? parseFloat(t['building:levels']) : null, roofLevels: t['roof:levels'] ? parseFloat(t['roof:levels']) : null,
+      material: t['building:material'] ?? null, colour: t['building:colour'] ?? null, type: t.building ?? bl.type ?? null, h: bl.h,
+      shops: inside.length, shopAddr: inside.map((sh) => sh.t['addr:housenumber']).filter(Boolean).slice(0, 4),
+    });
+  }
+}
 report.sloaneStreets = { fit: { ss: ssFit, ls: lsFit }, ss: { frontages: corridorSs.frontages.length, parts: corridorSs.parts, replaced: corridorSs.replaced }, ls: { frontages: corridorLs.frontages.length, parts: corridorLs.parts, replaced: corridorLs.replaced } };
 
 // ---- Custom landmark model data: Peter Jones -------------------------------------------------
@@ -464,14 +547,14 @@ for (const [name, rs] of byName) {
 const SITES_FILE = 'data/osm/sites-v2.json';
 const SITE_TYPES = new Set(['house', 'terrace', 'residential', 'yes', 'apartments', 'semidetached_house', 'retail', 'commercial']);
 const FIT = { townhouse: { w: 6, d: 6 }, shop: { w: 7, d: 6 }, park: { w: 8, d: 8 } };
-const streets = roads.filter((r) => r.cls === 'street' || r.cls === 'main');
+const streets = roadsBeforeSide.filter((r) => r.cls === 'street' || r.cls === 'main');
 const streetSegs = streets.flatMap((r) => { const o = []; for (let i = 0; i + 3 < r.pts.length; i += 2) o.push({ a: [r.pts[i], r.pts[i + 1]], b: [r.pts[i + 2], r.pts[i + 3]], half: r.w / 2, name: r.name }); return o; });
-const pathSegs = roads.filter((r) => r.cls === 'path').flatMap((r) => { const o = []; for (let i = 0; i + 3 < r.pts.length; i += 2) o.push({ a: [r.pts[i], r.pts[i + 1]], b: [r.pts[i + 2], r.pts[i + 3]], half: r.w / 2 }); return o; });
+const pathSegs = roadsBeforeSide.filter((r) => r.cls === 'path').flatMap((r) => { const o = []; for (let i = 0; i + 3 < r.pts.length; i += 2) o.push({ a: [r.pts[i], r.pts[i + 1]], b: [r.pts[i + 2], r.pts[i + 3]], half: r.w / 2 }); return o; });
 function rectPoly(cx, cz, angle, w, d) {
   const c = Math.cos(angle), sn = Math.sin(angle);
   return [[-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, d / 2], [-w / 2, d / 2]].map(([x, z]) => [cx + x * c + z * sn, cz - x * sn + z * c]);
 }
-const allSegs = roads.filter((r) => r.cls !== 'path').flatMap((r) => { const o = []; for (let i = 0; i + 3 < r.pts.length; i += 2) o.push({ a: [r.pts[i], r.pts[i + 1]], b: [r.pts[i + 2], r.pts[i + 3]], half: r.w / 2 }); return o; });
+const allSegs = roadsBeforeSide.filter((r) => r.cls !== 'path').flatMap((r) => { const o = []; for (let i = 0; i + 3 < r.pts.length; i += 2) o.push({ a: [r.pts[i], r.pts[i + 1]], b: [r.pts[i + 2], r.pts[i + 3]], half: r.w / 2 }); return o; });
 const segD = (p, a, b) => { const dx = b[0] - a[0], dz = b[1] - a[1], l = dx * dx + dz * dz || 1; const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / l)); return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dz); };
 // ---- Sloane Square central space (protected public space) ------------------------------------
 // Detail comes from a focused extract (scripts/osm/fetch-square.mjs → data/osm/square-raw.json):
@@ -651,7 +734,8 @@ try {
 // ---- Corridor street detail ------------------------------------------------------------------------
 const kr = corridorKr.streetData({ P, round1, areas, roads, square, report, exclAreaIds: ['w5318345', 'w900260769'] });
 delete kr.id; delete kr.name;
-const corridors = [corridorSs, corridorLs].map((c) => c.streetData({ P, round1, areas, roads, square, report }));
+const corridors = [corridorSs, corridorLs, ...sideCorridors].map((c) => c.streetData({ P, round1, areas, roads, square, report }));
+report.sideStreets = sideCorridors.map((c) => ({ id: c.id, len: Math.round(c.cum[c.cum.length - 1]), endS: Math.round(c.endS), frontages: c.frontages.length, replaced: c.replaced.added.length }));
 report.kingsRoad.street = { trees: kr.trees.length, lamps: kr.lamps.length, bollards: kr.bollards.length, crossings: kr.crossings.length, postBoxes: kr.postBoxes.length, rails: kr.rails.length, mouths: kr.mouths.length };
 
 const blockedAreas = areas.filter((a) => a.kind !== 'parking').map((a) => { const q = []; for (let i = 0; i < a.ring.length; i += 2) q.push([a.ring[i], a.ring[i + 1]]); return q; });

@@ -27,6 +27,9 @@ export interface SceneMap {
   baseScale: number;
   /** The neighbourhood itself (streets, buildings, landmarks). */
   buildStatic(): MeshBuilder;
+  /** Street-corridor buildings at two levels of detail (full models near the viewer, simple masses
+   *  further away and in the miniature). Call after buildStatic. */
+  buildLod?(): { detail: MeshBuilder; simple: MeshBuilder };
   /** The wooden base and plinth lettering, drawn only in the miniature view. */
   buildPlinth(): MeshBuilder;
   labels(): MapLabelDef[];

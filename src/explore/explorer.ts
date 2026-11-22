@@ -38,7 +38,9 @@ export const END_TEXTS: Record<string, string> = {
   ss: 'End of current area. Sloane Street is reconstructed as far as Cadogan Gardens and Ellis Street, near the edge of the map; the buildings beyond are plain massing. Return to the miniature or go back.',
   ls: 'End of current area. Lower Sloane Street ends here at the junction with Pimlico Road, Chelsea Bridge Road and Royal Hospital Road, which are not reconstructed. Return to the miniature or go back.',
 };
-const isEndText = (t: string | undefined) => !!t && Object.values(END_TEXTS).includes(t);
+/** The end message for a corridor (side streets share a wording naming the street). */
+export const endTextFor = (id: string, name: string) => END_TEXTS[id] ?? `End of current area. ${name} is reconstructed as far as here; beyond it the buildings are plain massing. Return to the miniature or go back.`;
+const isEndText = (t: string | undefined) => !!t && (Object.values(END_TEXTS).includes(t) || t.startsWith('End of current area.'));
 
 export const ROT_STEP = Math.PI / 12; // 15° miniature rotation step
 export const MAX_TELEPORT = 40; // metres per teleport (VR comfort; desktop clicks too)
@@ -89,7 +91,7 @@ export class Explorer {
     this.endId = id;
     this.atEnd = id !== null;
     // a new end (or a different corridor's end) shows its message unless another notice is up
-    if (id !== null && id !== was && (!this.notice || isEndText(this.notice.text))) this.notice = { text: END_TEXTS[id] ?? END_TEXT, kind: 'info' };
+    if (id !== null && id !== was && (!this.notice || isEndText(this.notice.text))) this.notice = { text: endTextFor(id, this.nav.corridors.find((c) => c.id === id)?.name ?? 'This street'), kind: 'info' };
     if (id === null && was !== null && isEndText(this.notice?.text)) this.notice = null;
   }
 

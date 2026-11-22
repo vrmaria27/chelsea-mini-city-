@@ -155,4 +155,12 @@ const kiosk: KrHook = (h) => {
   }
 };
 
-export const KR_HOOKS: Record<string, KrHook> = { attic, pedCentre, pedBay, colville, drugstore, dairy, atlantic, oneTwenty, bow138a, kiosk };
+
+const painted: KrHook = (h) => {
+  const fr = mainOf(h), hs = h.spec.houses; if (!fr || !hs) return;
+  const L = fr.len, n = Math.max(1, Math.round(L / hs.w)), hw = L / n;
+  const seed = [...h.spec.addr].reduce((a, ch) => a + ch.charCodeAt(0), 0);
+  for (let k = 0; k < n; k++) fr.wall(k * hw + 0.04, (k + 1) * hw - 0.04, h.ys[0] + 0.45, h.eaves - 0.3, M[hs.cols[(k + seed) % hs.cols.length]], 0.003);
+};
+
+export const KR_HOOKS: Record<string, KrHook> = { painted, attic, pedCentre, pedBay, colville, drugstore, dairy, atlantic, oneTwenty, bow138a, kiosk };

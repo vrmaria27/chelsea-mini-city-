@@ -41,6 +41,10 @@ export interface NavKr {
   /** Carriageway width at each centreline vertex. */
   w?: number[];
   paveFrom?: number;
+  /** Walkable band beyond the carriageway (m; default KR_BAND) — narrower on side streets. */
+  band?: number;
+  /** Narrow street walked on the carriageway. */
+  shared?: boolean;
   trees: { x: number; z: number }[];
   lamps: { x: number; z: number }[];
   bollards: { x: number; z: number }[];
@@ -174,7 +178,7 @@ export class NavField {
       const p = bounds(b.rings[0]);
       if (!near(p)) continue;
       // King's Road frontages project less (flush shopfronts, fascias ≤ 0.35 m) than the square's bays and porticos
-      const c = /^(kr|ss|ls):/.test(b.custom ?? '') ? KR_FACADE_CLEARANCE : FACADE_CLEARANCE;
+      const c = /^(kr|ss|ls|sd):/.test(b.custom ?? '') ? KR_FACADE_CLEARANCE : FACADE_CLEARANCE;
       const item: Bldg = { ...p, id: b.id, h: b.h, holes: b.rings.slice(1), c };
       this.buildings.add(item, p.minX - c, p.maxX + c, p.minZ - c, p.maxZ + c);
     }
@@ -235,6 +239,11 @@ export class NavField {
       }
     }
     for (const k of corData) this.corridors.push(new CorridorNav(k));
+    // a street whose end runs on into another walkable area (another street, a square) has no end message
+    for (const c of this.corridors) {
+      const [x, z] = c.beyondEnd(6);
+      c.open = this.corridors.some((o) => o !== c && o.inZone(x, z)) || pointInRing(x, z, this.square.ring) || ringDist(x, z, this.square.ring) <= ZONE_M || this.inDoyZone(x, z);
+    }
   }
 
   /** Nearest point on the King's Road centreline: distance, chainage, point and direction. */
@@ -336,8 +345,19 @@ export class NavField {
     const cor = this.corridorAt(x, z);
     const inKr = cor !== null && !this.inSquare(x, z) && !(this.doyRings.length && this.inDoy(x, z));
     if (inKr) {
-      const c = cor.classify(x, z);
-      if (c) return c;
+      // every street whose zone contains the point has a say (junctions overlap): an obstacle or a
+      // carriageway in any of them wins, unless the point is on a mapped crossing of that street
+      let crossing = false;
+      const inMain = this.corridors.some((k) => !k.id.startsWith('sd-') && k.inZone(x, z));
+      for (const k of this.corridors) {
+        if (!k.inZone(x, z) && !(k.onCarriageway(x, z))) continue;
+        const c = k.classify(x, z);
+        // a side street's mouth is crossed along the main street's pavement
+        if (c === 'carriageway' && inMain && k.id.startsWith('sd-')) continue;
+        if (c === 'ok') crossing = true;
+        else if (c) return c;
+      }
+      if (crossing) return 'ok';
     }
     if (this.doyRings.length && this.inDoyZone(x, z)) {
       const ob = this.doyObstacle(x, z);
@@ -420,6 +440,12 @@ export class CorridorNav {
   readonly sEnd: number;
   /** Chainage where the raised pavement begins (ramping up from the street level over 3 m). */
   readonly paveFrom: number;
+  /** Walkable band beyond the carriageway edge (m). */
+  readonly band: number;
+  /** True when the street continues into another walkable area at its end (no end-of-area message). */
+  open = false;
+  /** Narrow street walked on the carriageway (pavements too narrow to model or absent). */
+  readonly shared: boolean;
   private line: [number, number][] = [];
   private cum = [0];
   private hwv: number[];
@@ -428,7 +454,7 @@ export class CorridorNav {
   readonly bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
 
   constructor(k: NavKr & { id: string; name: string }) {
-    this.id = k.id; this.name = k.name; this.sStart = k.sStart; this.sEnd = k.sEnd; this.paveFrom = k.paveFrom ?? -Infinity;
+    this.id = k.id; this.name = k.name; this.sStart = k.sStart; this.sEnd = k.sEnd; this.paveFrom = k.paveFrom ?? -Infinity; this.band = k.band ?? KR_BAND; this.shared = !!k.shared;
     for (let i = 0; i + 1 < k.line.length; i += 2) this.line.push([k.line[i], k.line[i + 1]]);
     for (let i = 1; i < this.line.length; i++) this.cum.push(this.cum[i - 1] + Math.hypot(this.line[i][0] - this.line[i - 1][0], this.line[i][1] - this.line[i - 1][1]));
     this.hwv = this.line.map((_, i) => (k.w?.[i] ?? k.roadW) / 2);
@@ -439,7 +465,7 @@ export class CorridorNav {
     for (const b of k.postBoxes) add({ x: b.x, z: b.z, r: 0.5, kind: 'feature' });
     for (const c of k.crossings) { const q = this.near(c.x, c.z); this.crossings.push({ x: q.p[0], z: q.p[1], tx: q.t[0], tz: q.t[1] }); }
     const pts = this.line.filter((_, i) => this.cum[i] >= k.sStart - 20 && this.cum[i] <= k.sEnd + 20);
-    const m = Math.max(...this.hwv) + KR_BAND;
+    const m = Math.max(...this.hwv) + this.band;
     this.bounds = { minX: Math.min(...pts.map((p) => p[0])) - m, maxX: Math.max(...pts.map((p) => p[0])) + m, minZ: Math.min(...pts.map((p) => p[1])) - m, maxZ: Math.max(...pts.map((p) => p[1])) + m };
   }
 
@@ -466,22 +492,39 @@ export class CorridorNav {
     const b = this.bounds;
     if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) return false;
     const q = this.near(x, z);
-    return q.d <= this.hw(q.s) + KR_BAND && q.s >= this.sStart && q.s <= this.sEnd;
+    return q.d <= this.hw(q.s) + this.band && q.s >= this.sStart && q.s <= this.sEnd;
   }
 
   /** Walking-surface height at a point in the zone. */
   groundY(x: number, z: number): number {
-    const s = this.near(x, z).s;
+    const q = this.near(x, z), s = q.s;
+    if (this.shared && q.d < this.hw(s)) return STREET_GROUND;
     return KR_GROUND - (KR_GROUND - STREET_GROUND) * Math.max(0, Math.min(1, 1 - (s - this.paveFrom) / 3));
   }
 
   pastEnd(x: number, z: number): boolean {
     const q = this.near(x, z);
-    return q.d <= this.hw(q.s) + KR_BAND + 4 && q.s > this.sEnd && q.s < this.sEnd + 120;
+    return !this.open && q.d <= this.hw(q.s) + this.band + 4 && q.s > this.sEnd && q.s < this.sEnd + 120;
   }
 
   nearEnd(x: number, z: number): boolean {
-    return this.inZone(x, z) && this.near(x, z).s > this.sEnd - KR_END_WARN;
+    return !this.open && this.inZone(x, z) && this.near(x, z).s > this.sEnd - KR_END_WARN;
+  }
+
+  /** The point `ahead` metres beyond the end, along the line (to test whether the street runs on into another area). */
+  beyondEnd(ahead: number): [number, number] {
+    const n = this.line.length, a = this.line[n - 2], b = this.line[n - 1], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const q = this.near(b[0], b[1]);
+    const extra = this.sEnd + ahead - q.s;
+    return [b[0] + ((b[0] - a[0]) / L) * extra, b[1] + ((b[1] - a[1]) / L) * extra];
+  }
+
+  /** On this street's carriageway (within its start and end). */
+  onCarriageway(x: number, z: number): boolean {
+    const b = this.bounds;
+    if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) return false;
+    const q = this.near(x, z);
+    return q.s >= this.sStart && q.s <= this.sEnd && q.d < this.hw(q.s) + 0.3;
   }
 
   /** Obstacles and the carriageway (walkable only at a mapped crossing: a 3 m strip straight across). */
@@ -491,7 +534,7 @@ export class CorridorNav {
     const hw = this.hw(q.s);
     if (q.d < hw + 0.3) {
       const onCrossing = this.crossings.some((c) => { const dx = x - c.x, dz = z - c.z; return Math.abs(dx * c.tx + dz * c.tz) < 1.6 && Math.abs(-dx * c.tz + dz * c.tx) < hw + 0.5; });
-      return onCrossing ? 'ok' : 'carriageway';
+      return onCrossing || this.shared ? 'ok' : 'carriageway';
     }
     return null;
   }
