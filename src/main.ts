@@ -8,7 +8,11 @@ import { EYE_HEIGHT, NavField, SQUARE_GROUND, STREET_GROUND, type NavData } from
 import { exportLegacy, readLegacy } from './explore/legacy';
 import { safeLocalStorage } from './explore/prefs';
 import { ExplorerScene, type Marker, type PointerVisual } from './view/scene';
-import type { Action } from './view/panel';
+import type { Action, PanelTab, VisitPanel } from './view/panel';
+import { Visit, bearing, turnWords } from './visit/visit';
+import { HOME, POSTCARDS, STOPS } from './visit/route';
+import { Narrator, Soundscape } from './visit/audio';
+import { PhotoStore } from './visit/photos';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = $<HTMLCanvasElement>('scene');
@@ -34,6 +38,17 @@ const nav = new NavField(OSM as unknown as NavData);
 const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 const ex = new Explorer(nav, store, prefersReducedMotion);
 if (ex.loadStatus !== 'ok' && ex.loadStatus !== 'none') console.info(`Explorer preferences reset (${ex.loadStatus}).`);
+
+const visit = new Visit(store);
+if (visit.loadStatus !== 'ok' && visit.loadStatus !== 'none') console.info(`Visit progress reset (${visit.loadStatus}).`);
+const sound = new Soundscape(visit.state.sound);
+const narrator = new Narrator();
+const photos = new PhotoStore();
+// Every visit starts at street level: first time in Sloane Square by the fountain, later where you left off.
+{
+  const vp = !visit.state.welcomeSeen ? HOME : ex.prefs.viewpoint ?? HOME;
+  if (!ex.enterStreet({ ...vp })) ex.enterStreet({ ...HOME });
+}
 
 let xrSession: XRSession | null = null;
 let highlight: Landmark | null = null;
@@ -125,10 +140,48 @@ function selectPlace(id: string): void {
   else apply();
 }
 
-function doAction(a: Action | 'resetView'): void {
+function doAction(a: Action | 'resetView' | 'discover' | 'openRoute'): void {
+  startAudio();
   if (a.startsWith('place:')) {
     selectPlace(a.slice(6));
     return;
+  }
+  if (a.startsWith('tab:')) { panelTab = a.slice(4) as PanelTab; captureMsg = null; syncPanel(); return; }
+  if (a.startsWith('card:')) { selectedCard = a.slice(5); syncPanel(); return; }
+  switch (a) {
+    case 'welcome': visit.reopenWelcome(); break;
+    case 'welcomeFree': visit.chooseWelcome('free'); panelTab = 'explore'; break;
+    case 'welcomeDiscover': visit.chooseWelcome('discover'); panelTab = 'discover'; ensureStreet(); break;
+    case 'welcomeClose': visit.chooseWelcome(null); break;
+    case 'discover':
+      if (visit.state.mode === 'free') { visit.startRoute(); routeCardOpen = !visit.openStop; ensureStreet(); }
+      else routeCardOpen = !routeCardOpen;
+      panelTab = 'discover';
+      renderVisit();
+      break;
+    case 'openRoute': routeCardOpen = !routeCardOpen; renderVisit(); break;
+    case 'routeStart': visit.startRoute(); ensureStreet(); break;
+    case 'routeLeave': narrator.stop(); visit.leaveRoute(); routeCardOpen = false; break;
+    case 'storyListen': case 'storyReplay': listen(); break;
+    case 'storyPause': narrator.pause(); break;
+    case 'storyResume': narrator.resume(); break;
+    case 'storyDetail': showDetail = !showDetail; renderVisit(); break;
+    case 'storyClose': narrator.stop(); showDetail = false; routeCardOpen = false; visit.closeStop(); break;
+    case 'doneClose': visit.closeCompletion(); break;
+    case 'nextStop': stepToNextStop(); break;
+    case 'skipStop': narrator.stop(); visit.skipStop(); break;
+    case 'home': visit.closeCompletion(); goHome(); break;
+    case 'capture': takePostcard('button'); break;
+    case 'postcards':
+      if (xrSession) { panelTab = 'postcards'; visit.closeCompletion(); syncPanel(); } else { visit.closeCompletion(); showCards(); }
+      break;
+    case 'hint': showHint = !showHint; syncPanel(); break;
+    case 'sndMute': visit.setSound('muted', !visit.state.sound.muted); break;
+    case 'sndAmbience': visit.setSound('ambience', !visit.state.sound.ambience); break;
+    case 'sndNarration': visit.setSound('narration', !visit.state.sound.narration); break;
+    case 'smooth': visit.setSmooth(!visit.state.smooth); break;
+    case 'guide': visit.setGuide(!visit.state.guide); break;
+    case 'hideUI': visit.setHidden(!visit.state.uiHidden); break;
   }
   switch (a) {
     case 'toStreet': goStreet(); break;
@@ -371,6 +424,7 @@ let locked = false;
 
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('pointerdown', (e) => {
+  startAudio();
   if (locked) {
     // pointer lock: a click steps to the point at the centre of the view
     const r = canvas.getBoundingClientRect();
@@ -473,6 +527,7 @@ document.addEventListener('pointerlockchange', () => {
 const keys = new Set<string>();
 window.addEventListener('keydown', (e) => {
   if ((e.target as HTMLElement).tagName === 'INPUT') return;
+  startAudio();
   const k = e.key.toLowerCase();
   if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'shift'].includes(k)) {
     if (ex.mode === 'street') {
@@ -488,7 +543,15 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'r') doAction('resetView');
   else if (k === 'm') ex.mode === 'street' ? goMiniature() : goStreet();
   else if (k === 'l') doAction('labels');
-  else if (k === 'escape' && !$('about').hidden) $('about').hidden = true;
+  else if (k === 'p') doAction('capture');
+  else if (k === 'h') doAction('hideUI');
+  else if (k === 'c') doAction('postcards');
+  else if (k === 'escape') {
+    if (!$('bigCard').hidden) $('bigCard').hidden = true;
+    else if (!$('cards').hidden) $('cards').hidden = true;
+    else if (!$('about').hidden) $('about').hidden = true;
+    else if (!$('welcome').hidden) doAction('welcomeClose');
+  }
 });
 window.addEventListener('keyup', (e) => {
   const k = e.key.toLowerCase();
@@ -536,6 +599,8 @@ function markersFor(h: GroundHit | null): Marker[] {
     out.push({ x: p.x, z: p.z, y: nav.groundY(p.x, p.z), ok: true, yaw: p.yaw });
   }
   if (h) out.push({ x: h.x, z: h.z, y: h.y, ok: h.ok, yaw: null });
+  const g = guideMarker();
+  if (g) out.push(g);
   return out;
 }
 
@@ -552,6 +617,12 @@ function desktopFrame(time: number): void {
   resize();
   walk(dt);
   updateDesktopCamera();
+  if (ex.mode === 'street') {
+    visit.updatePosition(ex.street.x, ex.street.z);
+    const e = streetEye();
+    sound.setListener(e[0], e[1], e[2], ex.street.yaw);
+  } else sound.setListener(0, 600, 0, 0);
+  tickGuide(time);
   if (ex.mode === 'miniature') updateLabelVisibility(eye);
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.viewport(0, 0, canvas.width, canvas.height);
@@ -563,7 +634,11 @@ function desktopFrame(time: number): void {
   requestAnimationFrame(desktopFrame);
 }
 requestAnimationFrame(desktopFrame);
-document.addEventListener('visibilitychange', () => (lastTime = -1));
+document.addEventListener('visibilitychange', () => {
+  lastTime = -1;
+  // pause sound and narration while the page is hidden
+  if (document.hidden) { sound.suspend(); narrator.pause(); } else sound.resume();
+});
 
 // ---------------------------------------------------------------------------------------------
 // WebXR
@@ -604,7 +679,7 @@ const xrStreet = { sx: 0, sy: 0, sz: 0, ox: 0, oy: 0, oz: 0, yaw: 0 };
 const xrViewProj = mat4();
 const xrEye: Vec3 = [0, 0, 0];
 const ctrlRay: Ray = { origin: [0, 0, 0], dir: [0, 0, 0] };
-interface CtrlState { panel: Action | null | undefined; panelT: number; ground: GroundHit | null; visual: PointerVisual; snapReady: boolean; scaleReady: boolean }
+interface CtrlState { panel: Action | null | undefined; panelT: number; ground: GroundHit | null; visual: PointerVisual; snapReady: boolean; scaleReady: boolean; buttons?: boolean[] }
 const ctrls = new Map<XRInputSource, CtrlState>();
 let primary: XRInputSource | null = null;
 
@@ -621,7 +696,7 @@ async function enterVR(): Promise<void> {
     floorSpace = false;
   }
   xrSession = session;
-  scene.showPanel = true;
+  scene.showPanel = !visit.state.uiHidden;
   recenterPending = true;
   if (ex.mode === 'street') xrPlacePending = 'enter';
   vrBox.hidden = true;
@@ -649,6 +724,7 @@ function onXREnd(): void {
 }
 
 function onSelect(ev: XRInputSourceEvent): void {
+  startAudio();
   primary = ev.inputSource;
   const st = ctrls.get(ev.inputSource);
   if (!st) return;
@@ -743,7 +819,10 @@ function syncPanel(): void {
     endReturn: ex.mode === 'street' && (ex.atEnd || n?.text === END_REASON) ? `Return to ${ex.returnPlace.name}` : null,
     mode: ex.mode, labels: ex.prefs.labels, lowDetail: ex.prefs.lowDetail, reducedMotion: ex.prefs.reducedMotion,
     snapTurnDeg: ex.prefs.snapTurnDeg, seated: ex.prefs.seated, selectedId: l?.id ?? null, title, body, warn,
-  });
+    visit: visitPanel(),
+  }, panelImagesChanged);
+  panelImagesChanged = false;
+  scene.showPanel = !visit.state.uiHidden;
 }
 
 const panelOffset = mat4();
@@ -793,8 +872,24 @@ function xrFrame(time: number, frame: XRFrame): void {
     applyXrStreet();
     const h = headOnMap(pose);
     ex.street = { x: h.x, z: h.z, yaw: h.yaw }; // room-scale steps (not saved every frame)
+    // optional smooth walking with the left thumbstick (never automatic)
+    if (visit.state.smooth && dt > 0) {
+      let fx = 0, fy = 0;
+      for (const src of session.inputSources) if (src.handedness === 'left' && src.gamepad && src.gamepad.axes.length >= 4) { fx = src.gamepad.axes[2]; fy = src.gamepad.axes[3]; }
+      if (Math.hypot(fx, fy) > 0.25) {
+        const sp = 1.3 * dt, y = h.yaw;
+        const dx = (-Math.sin(y) * -fy + Math.cos(y) * fx) * sp, dz = (-Math.cos(y) * -fy - Math.sin(y) * fx) * sp;
+        if (ex.walk(dx, dz)) placeStreet(pose, ex.street.x, ex.street.z, h.yaw), applyXrStreet();
+      }
+    }
+    visit.updatePosition(ex.street.x, ex.street.z);
+    const hp = pose.transform.position;
+    const em = scene.worldToMap([hp.x, hp.y, hp.z]);
+    sound.setListener(em[0], em[1], em[2], h.yaw);
+    if (pendingVrCapture) { const src = pendingVrCapture; pendingVrCapture = null; takePostcardVR(pose, src); }
   } else {
     xrTurnPending = 0;
+    sound.setListener(0, 600, 0, 0);
     scene.mini.yaw = ex.prefs.miniature.yaw;
     scene.mini.scale = ex.prefs.miniature.scale;
     scene.setMiniature();
@@ -831,9 +926,9 @@ function xrFrame(time: number, frame: XRFrame): void {
     st.visual.matrix.set(m);
     ctrlRay.origin = [m[12], m[13], m[14]];
     ctrlRay.dir = [-m[8], -m[9], -m[10]];
-    // the hand holding the panel does not point at it
+    // the hand holding the panel does not point at it; a hidden panel can't be pointed at
     const holdsPanel = ex.mode === 'street' && leftGrip && src.handedness === 'left';
-    const ph = holdsPanel ? null : panelHit(ctrlRay);
+    const ph = holdsPanel || !scene.showPanel ? null : panelHit(ctrlRay);
     st.panel = ph ? ph.action : undefined;
     st.ground = ph ? null : groundHit(ctrlRay);
     const len = ph ? ph.t : st.ground ? Math.min(st.ground.t, 60) : 1.2;
@@ -844,6 +939,7 @@ function xrFrame(time: number, frame: XRFrame): void {
     if (ph?.action) panelHover = ph.action;
     if (st.ground && (src === primary || !holdsPanel)) markers.push({ x: st.ground.x, z: st.ground.z, y: st.ground.y, ok: st.ground.ok, yaw: null });
     handleThumbstick(src, st);
+    handleButtons(src, st);
   }
   scene.panel.setHover(panelHover);
 
@@ -891,6 +987,8 @@ function panelHit(ray: Ray): { action: Action | null; t: number } | null {
 function handleThumbstick(src: XRInputSource, st: CtrlState): void {
   const ax = src.gamepad?.axes;
   if (!ax || ax.length < 4) return;
+  // with smooth walking on, the left stick walks and only the right stick turns
+  if (visit.state.smooth && ex.mode === 'street' && src.handedness === 'left') return;
   const x = ax[2], y = ax[3];
   if (Math.abs(x) > 0.7 && st.snapReady) {
     if (ex.mode === 'street') turn(x > 0 ? -1 : 1);
@@ -905,5 +1003,294 @@ function handleThumbstick(src: XRInputSource, st: CtrlState): void {
 }
 
 
+// ---------------------------------------------------------------------------------------------
+// Visitor experience: welcome, "Discover Chelsea" route, postcards, soundscape (src/visit)
+
+let panelTab: PanelTab = 'explore';
+let selectedCard: string | null = null;
+let showHint = false;
+let showDetail = false;
+let routeCardOpen = false;
+let captureMsg: string | null = null;
+let panelImagesChanged = false;
+let pendingVrCapture: 'button' | 'shutter' | null = null;
+const SKY: [number, number, number] = [0.74, 0.82, 0.88];
+
+/** Audio may only start after a user action; harmless to call often. */
+function startAudio(): void {
+  if (!sound.started && !sound.failed) sound.start();
+  else sound.resume();
+}
+
+function ensureStreet(): void {
+  if (ex.mode !== 'street') goStreet({ ...HOME });
+}
+
+function goHome(): void {
+  narrator.stop();
+  routeCardOpen = false;
+  transition(() => {
+    if (ex.mode === 'street') { ex.enterStreet({ ...HOME }); streetPitch = -0.02; }
+    else ex.enterStreet({ ...HOME });
+    if (xrSession) xrPlacePending = 'enter';
+  });
+}
+
+/** Steps (with the usual fade) to the next stop's viewpoint: the visitor asked, so no automatic travel. */
+function stepToNextStop(): void {
+  const t = visit.target;
+  if (!t) return;
+  routeCardOpen = false;
+  transition(() => {
+    ex.enterStreet({ ...t.at });
+    streetPitch = 0;
+    if (xrSession) xrPlacePending = 'enter';
+    visit.updatePosition(t.at.x, t.at.z);
+  });
+}
+
+function storyStop() {
+  const id = visit.openStop;
+  return id ? STOPS.find((s) => s.id === id) ?? null : null;
+}
+
+function listen(): void {
+  const st = storyStop();
+  if (!st) return;
+  if (!narrator.available) { toast('Narration isn’t available in this browser; the story is shown as text.'); return; }
+  if (visit.state.sound.muted || !visit.state.sound.narration) { toast('Narration is switched off in the Sound settings.'); return; }
+  narrator.speak(st.story);
+}
+
+let toastTimer = 0;
+function toast(text: string, good = false): void {
+  captureMsg = text;
+  const t = $('toast');
+  t.textContent = text;
+  t.className = `hud card${good ? ' good' : ''}`;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => { t.hidden = true; captureMsg = null; syncPanel(); }, 5200);
+  ex.version++;
+  syncPanel();
+}
+
+/** Ring on the pavement a few metres along the route (only while following it, and only if wanted). */
+function guideMarker(): Marker | null {
+  if (ex.mode !== 'street' || visit.state.mode !== 'discover' || !visit.state.guide || visit.openStop) return null;
+  const g = visit.guidance(ex.street.x, ex.street.z);
+  if (!g || g.remaining < 6) return null;
+  return { x: g.x, z: g.z, y: nav.groundY(g.x, g.z), ok: true, yaw: null };
+}
+
+function guideText(): string | null {
+  if (visit.state.mode !== 'discover' || ex.mode !== 'street') return null;
+  const g = visit.guidance(ex.street.x, ex.street.z);
+  if (!g) return null;
+  const turn = Math.atan2(Math.sin(bearing(ex.street.x, ex.street.z, g.x, g.z) - ex.street.yaw), Math.cos(bearing(ex.street.x, ex.street.z, g.x, g.z) - ex.street.yaw));
+  return `Next stop: ${g.target.title} · ${Math.max(5, Math.round(g.remaining / 5) * 5)} m, ${turnWords(turn)}${g.crossing ? ' · cross the road with care' : ''}`;
+}
+
+let lastGuide = 0;
+function tickGuide(time: number): void {
+  if (time - lastGuide < 300) return;
+  lastGuide = time;
+  const pill = $('guidePill');
+  const txt = guideText();
+  const show = !!txt && !visit.openStop && !routeCardOpen && !visit.showWelcome;
+  pill.hidden = !show;
+  if (show) {
+    const g = visit.guidance(ex.street.x, ex.street.z)!;
+    const turn = bearing(ex.street.x, ex.street.z, g.x, g.z) - ex.street.yaw;
+    $('guideArrow').style.transform = `rotate(${(-turn * 180) / Math.PI}deg)`;
+    $('guideText').textContent = txt!.replace(/^Next stop: /, 'Next: ');
+  }
+  if (xrSession) syncPanel();
+}
+
+function visitPanel(): VisitPanel {
+  const st = storyStop();
+  const n = !narrator.available ? 'unavailable' : narrator.state;
+  return {
+    tab: panelTab, welcome: visit.showWelcome, completion: visit.showCompletion && !visit.openStop, mode: visit.state.mode,
+    story: st ? { title: st.title, text: st.story, detail: st.detail, showDetail } : null,
+    next: guideText(), narration: n,
+    stopsDone: visit.state.visited.length, stopsTotal: STOPS.length,
+    cards: POSTCARDS.map((p) => ({ id: p.id, place: p.place, clue: p.clue, hint: p.hint, have: p.id in visit.state.postcards })),
+    selectedCard, showHint, cardCount: visit.postcardCount, message: captureMsg,
+    sound: { ...visit.state.sound }, smooth: visit.state.smooth, guide: visit.state.guide,
+  };
+}
+
+// ---- postcards ---------------------------------------------------------------------------------
+
+function captureMessage(r: ReturnType<Visit['checkCapture']>): string {
+  if (r.ok) return '';
+  if (r.reason === 'far') return `No postcard to take here. The nearest clue: “${r.nearest.clue}” (about ${Math.max(10, Math.round(r.distance / 10) * 10)} m away).`;
+  if (r.reason === 'direction') { const w = turnWords(r.turn); return w === 'behind you' ? `Almost: turn round to frame ${r.postcard.place}.` : `Almost: turn ${w.replace(/^(\d+°) to your/, '$1 to the')} to frame ${r.postcard.place}.`; }
+  return `Something is in the way of ${r.postcard.place}. Try a step or two to the side.`;
+}
+
+/** Saves an image as a postcard and tells the visitor. */
+function keepPostcard(id: string, place: string, retake: boolean, cv: HTMLCanvasElement | null): void {
+  if (!cv) { toast('The camera didn’t catch that one. Please try again.'); return; }
+  const done = (blob: Blob | null) => {
+    if (!blob) { toast('The camera didn’t catch that one. Please try again.'); return; }
+    visit.award(id);
+    photos.put(id, blob).then((saved) => {
+      loadPanelImage(id);
+      if (!saved) toast(`${retake ? 'Retaken' : 'Postcard collected'}: ${place}. (This device can’t store photos, so it will last until you close the page.)`, true);
+    });
+    toast(`${retake ? 'Postcard retaken' : 'Postcard collected'}: ${place} · ${visit.postcardCount} of 6`, true);
+    if (!$('cards').hidden) showCards();
+  };
+  try { cv.toBlob(done, 'image/jpeg', 0.82); } catch { done(null); }
+}
+
+/** Desktop: the photograph is the current view (same position, heading and tilt) at 3:2. */
+function takePostcard(src: 'button' | 'shutter'): void {
+  if (xrSession) { pendingVrCapture = src; return; }
+  if (ex.mode !== 'street') { toast('Postcards are taken at street level. Go to street level and find a view.'); return; }
+  const e = streetEye();
+  const r = visit.checkCapture(ex.street.x, ex.street.z, ex.street.yaw, e[1], nav);
+  if (!r.ok) { toast(captureMessage(r)); return; }
+  const v = mat4(), pr = mat4(), vp = mat4();
+  const y = ex.street.yaw, p = streetPitch;
+  lookAt(v, e, [e[0] - Math.sin(y) * Math.cos(p), e[1] + Math.sin(p), e[2] - Math.cos(y) * Math.cos(p)]);
+  perspective(pr, (55 * Math.PI) / 180, 1.5, 0.1, 900);
+  multiply(vp, pr, v);
+  keepPostcard(r.postcard.id, r.postcard.place, r.retake, scene.captureImage(vp, e, 768, 512, performance.now() / 1000, SKY));
+}
+
+/**
+ * VR: a single camera at the head (not the two-eye view), level with the head's heading; the panel
+ * button keeps the horizon level (you are looking at the panel), the A button uses the head's tilt.
+ */
+function takePostcardVR(pose: XRViewerPose, src: 'button' | 'shutter'): void {
+  if (ex.mode !== 'street') { toast('Postcards are taken at street level.'); return; }
+  const h = headOnMap(pose);
+  const p = pose.transform.position;
+  const em = scene.worldToMap([p.x, p.y, p.z]);
+  const r = visit.checkCapture(h.x, h.z, h.yaw, em[1], nav);
+  if (!r.ok) { toast(captureMessage(r)); return; }
+  const m = pose.transform.matrix;
+  const fx = -m[8], fy = -m[9], fz = -m[10];
+  const fl = Math.hypot(fx, fz) || 1;
+  const pitch = src === 'shutter' ? clamp(Math.atan2(fy, fl), -0.3, 0.6) : 0.05;
+  const eyeW: Vec3 = [p.x, p.y, p.z];
+  const v = mat4(), pr = mat4(), vp = mat4();
+  lookAt(v, eyeW, [p.x + (fx / fl) * Math.cos(pitch), p.y + Math.sin(pitch), p.z + (fz / fl) * Math.cos(pitch)]);
+  perspective(pr, (55 * Math.PI) / 180, 1.5, 0.05, 900);
+  multiply(vp, pr, v);
+  keepPostcard(r.postcard.id, r.postcard.place, r.retake, scene.captureImage(vp, eyeW, 768, 512, performance.now() / 1000, SKY));
+}
+
+function loadPanelImage(id: string): void {
+  photos.url(id).then((u) => {
+    if (!u) return;
+    const im = new Image();
+    im.onload = () => { scene.panel.images.set(id, im); panelImagesChanged = true; syncPanel(); };
+    im.src = u;
+  });
+}
+for (const id of Object.keys(visit.state.postcards)) loadPanelImage(id);
+
+function showCards(): void {
+  $('cardsSub').textContent = `${visit.postcardCount} of 6 postcards${visit.postcardCount === 6 ? '. A full set: lovely.' : ''}${photos.persistent ? '' : ' · This browser can’t keep photos after you close the page.'}`;
+  $('cardGrid').innerHTML = POSTCARDS.map((p) => {
+    const have = p.id in visit.state.postcards;
+    return `<div class="slot"><div class="ph" id="ph-${p.id}">${have ? '…' : '?'}</div><b>${esc(p.place)}</b><span class="clue">${esc(p.clue)}</span><details><summary class="clue">Hint</summary><span class="hint">${esc(p.hint)}</span></details></div>`;
+  }).join('');
+  for (const p of POSTCARDS) if (p.id in visit.state.postcards) photos.url(p.id).then((u) => {
+    const el = document.getElementById(`ph-${p.id}`);
+    if (!el) return;
+    if (!u) { el.textContent = '✓'; return; }
+    el.innerHTML = `<img src="${u}" alt="Postcard: ${esc(p.place)}" />`;
+    el.querySelector('img')!.addEventListener('click', () => { ($('bigImg') as HTMLImageElement).src = u; ($('bigImg') as HTMLImageElement).alt = `Postcard: ${p.place}`; $('bigCap').textContent = p.place; $('bigCard').hidden = false; });
+  });
+  $('cards').hidden = false;
+}
+$('cardsClose').addEventListener('click', () => ($('cards').hidden = true));
+$('bigClose').addEventListener('click', () => ($('bigCard').hidden = true));
+$('bigCard').addEventListener('click', (e) => { if (e.target === $('bigCard')) $('bigCard').hidden = true; });
+
+// ---- desktop rendering of the visit -------------------------------------------------------------
+
+const touch = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+$('tryIt').textContent = touch
+  ? 'Try it: tap the paving ahead to step there, and drag to look around.'
+  : 'Try it: click the paving ahead to step there (or walk with W A S D), and drag to look around.';
+
+function renderVisit(): void {
+  const st = visit.state;
+  sound.set(st.sound);
+  if (st.sound.muted || !st.sound.narration) narrator.stop();
+  document.body.classList.toggle('uihidden', st.uiHidden);
+  $('showUI').hidden = !st.uiHidden;
+  $('welcome').hidden = !visit.showWelcome;
+  $('btnCards').textContent = `Postcards ${visit.postcardCount}/6`;
+  $('btnDiscover').textContent = st.mode === 'discover' ? 'Route' : visit.state.visited.length ? 'Resume walk' : 'Discover Chelsea';
+  $('btnCapture').toggleAttribute('disabled', ex.mode !== 'street');
+  const opt = (id: string, label: string, on: boolean, txt = on ? 'on' : 'off') => { const b = $(id); b.setAttribute('aria-pressed', String(on)); b.textContent = `${label}: ${txt}`; };
+  opt('optMute', 'All sound', !st.sound.muted, st.sound.muted ? 'muted' : 'on');
+  opt('optAmb', 'Ambience', st.sound.ambience);
+  opt('optNarr', 'Narration', st.sound.narration);
+  // story / route card
+  const story = $('story');
+  const s = storyStop();
+  let html = '';
+  if (s) {
+    const n = narrator.state;
+    html = `<h3>${esc(s.title)}</h3><p>${esc(s.story)}</p>${showDetail ? `<p class="detail"><b>Look for:</b> ${esc(s.detail)}</p>` : ''}
+      <div class="row">${narrator.available ? `<button data-action="${n === 'speaking' ? 'storyPause' : n === 'paused' ? 'storyResume' : 'storyListen'}">${n === 'speaking' ? '❚❚ Pause' : n === 'paused' ? '▶ Resume' : '▶ Listen'}</button><button data-action="storyReplay">↺ Replay</button>` : '<span class="meta">Narration isn’t available in this browser.</span>'}
+      <button data-action="storyDetail" aria-pressed="${showDetail}">${showDetail ? 'Hide detail' : 'A detail to notice'}</button>
+      <button class="primary" data-action="storyClose">Continue exploring</button></div>
+      <p class="meta" style="margin-top:8px">Stop ${visit.stopIndex(s.id) + 1} of ${STOPS.length}${st.mode === 'discover' && visit.target ? ` · next: ${esc(visit.target.title)}` : ''} · <a href="#" data-sources="${esc(s.id)}">sources</a></p>`;
+  } else if (routeCardOpen && st.mode === 'discover') {
+    const t = visit.target;
+    html = `<h3>Discover Chelsea</h3><p>${t ? esc(guideText() ?? '') : 'You’ve visited every stop. Enjoy exploring, and come back for any postcards you missed.'}</p>
+      <p class="meta">${st.visited.length} of ${STOPS.length} stops · ${visit.postcardCount} of 6 postcards. Follow the green ring on the pavement, or step straight to the next stop.</p>
+      <div class="row">${t ? '<button class="primary" data-action="nextStop">Step to the next stop</button><button data-action="skipStop">Skip this stop</button>' : ''}
+      <button data-action="routeLeave">Explore freely</button><button data-action="guide" aria-pressed="${st.guide}">Ground ring: ${st.guide ? 'on' : 'off'}</button><button data-action="openRoute">Close</button></div>`;
+  }
+  story.innerHTML = html;
+  story.hidden = !html;
+  $('info').hidden = !!html;
+  // completion
+  if (visit.showCompletion && !visit.openStop && $('done').hidden) {
+    $('doneBody').textContent = `From the Venus Fountain to Markham Square: ${st.visited.length} of ${STOPS.length} stops and ${visit.postcardCount} of 6 postcards. Any you missed will be waiting whenever you come back.`;
+    $('doneGrid').innerHTML = POSTCARDS.map((p) => `<div class="slot"><div class="ph" id="dph-${p.id}">${p.id in st.postcards ? '…' : '?'}</div><b>${esc(p.place)}</b></div>`).join('');
+    for (const p of POSTCARDS) if (p.id in st.postcards) photos.url(p.id).then((u) => { const el = document.getElementById(`dph-${p.id}`); if (el) el.innerHTML = u ? `<img src="${u}" alt="Postcard: ${esc(p.place)}" />` : '✓'; });
+    $('done').hidden = false;
+  }
+  if (!visit.showCompletion || visit.openStop) $('done').hidden = true;
+  syncPanel();
+}
+visit.subscribe(renderVisit);
+narrator.onchange = renderVisit;
+ex.subscribe(() => renderVisit());
+renderVisit();
+document.addEventListener('click', (e) => {
+  const a = (e.target as HTMLElement).closest<HTMLAnchorElement>('[data-sources]');
+  if (!a) return;
+  e.preventDefault();
+  const s = STOPS.find((x) => x.id === a.dataset.sources);
+  if (!s) return;
+  $('aboutBody').innerHTML = `<p><b>${esc(s.title)}</b>: sources for the story.</p><ul>${s.sources.map((x) => `<li><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title)}</a></li>`).join('')}</ul>`;
+  $('about').hidden = false;
+});
+
+/** VR buttons: A (right) takes a postcard of the view; X or Y (left) hides or shows the panel. */
+function handleButtons(src: XRInputSource, st: CtrlState): void {
+  const b = src.gamepad?.buttons;
+  if (!b) return;
+  const now = b.map((x) => x.pressed);
+  const was = st.buttons ?? now.map(() => false);
+  st.buttons = now;
+  const pressed = (i: number) => now[i] && !was[i];
+  if (src.handedness === 'right' && pressed(4)) { startAudio(); takePostcard('shutter'); }
+  if (src.handedness === 'left' && (pressed(4) || pressed(5))) doAction('hideUI');
+}
+
 // A tiny debug hook for automated desktop checks.
-(window as unknown as { __explorer: unknown }).__explorer = { ex, scene, nav, cam, doAction, selectPlace, goStreet, goMiniature, setPitch: (p: number) => (streetPitch = p) };
+(window as unknown as { __explorer: unknown }).__explorer = { ex, scene, nav, cam, doAction, selectPlace, goStreet, goMiniature, setPitch: (p: number) => (streetPitch = p), visit, photos, narrator, sound };

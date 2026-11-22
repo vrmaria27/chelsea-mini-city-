@@ -57,6 +57,41 @@
     .modal .card { width: min(580px, 92vw); max-height: 86vh; overflow: auto; padding: 20px 24px; font-size: 14px; line-height: 1.5; }
     .modal h2 { margin: 0 0 10px; }
     .modal .sub { color: var(--soft); }
+    /* visitor experience */
+    #visitBar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    #visitBar .sep { width: 1px; height: 22px; background: var(--line); margin: 0 2px; }
+    #guidePill { bottom: 96px; left: 50%; transform: translateX(-50%); padding: 7px 12px; display: flex; gap: 10px; align-items: center; font-size: 13.5px; }
+    #guideArrow { display: inline-block; width: 24px; height: 24px; line-height: 24px; text-align: center; border-radius: 50%; background: var(--green); color: #fff; font-weight: 700; }
+    #story { bottom: 14px; left: 50%; transform: translateX(-50%); width: min(660px, calc(100vw - 24px)); padding: 14px 18px; font-size: 14.5px; line-height: 1.5; max-height: 52vh; overflow: auto; }
+    #story h3 { margin: 0 0 6px; font-size: 18px; }
+    #story p { margin: 0 0 8px; }
+    #story .detail { background: #f4efe2; border-radius: 10px; padding: 8px 10px; color: #3e4a3f; }
+    #story .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+    #story .meta { color: var(--soft); font-size: 12.5px; }
+    #toast { bottom: 148px; left: 50%; transform: translateX(-50%); padding: 9px 14px; font-size: 14px; max-width: min(520px, 92vw); text-align: center; }
+    #toast.good { border-color: #9fbcab; }
+    #showUI { position: fixed; z-index: 3; top: 12px; right: 12px; padding: 8px 12px; font-size: 13px; }
+    #welcome .card, #done .card { width: min(640px, 94vw); }
+    .choices { display: grid; gap: 10px; margin: 14px 0; }
+    .choice { text-align: left; padding: 14px 16px; border-radius: 14px; font-size: 15px; }
+    .choice b { display: block; font-size: 18px; margin-bottom: 3px; }
+    .choice.primary b { color: #fff; }
+    .tryit { background: #eef4ef; border-radius: 10px; padding: 9px 12px; color: #2f5a45; font-weight: 600; font-size: 13.5px; }
+    #cards .card { width: min(860px, 96vw); }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 12px 0; }
+    .slot { border: 1px solid var(--line); border-radius: 12px; background: #f6f1e7; padding: 8px; display: grid; gap: 6px; align-content: start; }
+    .slot .ph { aspect-ratio: 3 / 2; border-radius: 8px; background: #ebe3d3; display: grid; place-items: center; color: var(--soft); font-size: 30px; overflow: hidden; }
+    .slot img { width: 100%; height: 100%; object-fit: cover; display: block; cursor: zoom-in; }
+    .slot b { font-size: 13.5px; }
+    .slot .clue { font-size: 12.5px; color: var(--soft); }
+    .slot .hint { font-size: 12.5px; color: #2f5a45; }
+    #bigCard { position: fixed; inset: 0; z-index: 7; background: rgba(30, 24, 18, 0.82); display: grid; place-items: center; padding: 20px; }
+    #bigCard figure { margin: 0; background: #fbf7ef; padding: 12px 12px 8px; border-radius: 6px; box-shadow: 0 10px 40px rgba(0,0,0,0.4); max-width: 92vw; }
+    #bigCard img { display: block; max-width: min(900px, 88vw); max-height: 70vh; }
+    #bigCard figcaption { font-size: 15px; padding: 8px 2px 2px; display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+    body.uihidden .hud, body.uihidden #vr, body.uihidden #attribution { display: none !important; }
+    body.uihidden #showUI { display: block !important; }
+    @media (max-width: 820px) { #guidePill { bottom: 120px; } .grid { grid-template-columns: repeat(2, 1fr); } }
     #error { position: fixed; inset: 0; display: none; place-items: center; z-index: 9; background: var(--bg); padding: 24px; text-align: center; }
     body.street #places { opacity: 0.96; }
     @media (max-width: 820px) {
@@ -79,6 +114,15 @@
     </div>
     <div id="compass" title="North indicator" aria-label="North indicator"><svg width="26" height="26" viewBox="-13 -13 26 26" aria-hidden="true"><path d="M0 -11 L4 1 L0 -1 L-4 1 Z" fill="#a33b32"/><path d="M0 11 L4 -1 L0 1 L-4 -1 Z" fill="#b9b0a3"/></svg></div>
     <span style="font-size:12px;color:var(--soft)">North</span>
+    <div id="visitBar">
+      <span class="sep"></span>
+      <button data-action="welcome" title="Welcome and how to move">Welcome</button>
+      <button data-action="discover" id="btnDiscover">Discover Chelsea</button>
+      <button data-action="capture" id="btnCapture" title="Take a postcard of this view (P)">◉ Take postcard</button>
+      <button data-action="postcards" id="btnCards" title="Your postcards (C)">Postcards 0/6</button>
+      <button data-action="home" title="Return to Sloane Square">Sloane Square</button>
+      <button data-action="hideUI" title="Hide the interface (H)">Hide interface</button>
+    </div>
   </header>
 
   <nav id="places" class="hud card" aria-label="Places">
@@ -108,10 +152,53 @@
     <button data-action="labels" id="optLabels" aria-pressed="true">Labels: on</button>
     <button data-action="lowDetail" id="optDetail" aria-pressed="false">Low detail: off</button>
     <button data-action="reducedMotion" id="optMotion" aria-pressed="false">Reduced motion: off</button>
+    <h2 style="margin-top:6px">Sound</h2>
+    <button data-action="sndMute" id="optMute" aria-pressed="false">All sound: on</button>
+    <div class="row">
+      <button data-action="sndAmbience" id="optAmb" aria-pressed="true">Ambience: on</button>
+      <button data-action="sndNarration" id="optNarr" aria-pressed="true">Narration: on</button>
+    </div>
     <button data-action="about">About &amp; attribution</button>
   </aside>
 
   <section id="info" class="hud card" aria-live="polite"></section>
+  <div id="guidePill" class="hud card" hidden aria-live="polite"><span id="guideArrow" aria-hidden="true">↑</span><span id="guideText"></span><button data-action="openRoute">Route</button></div>
+  <section id="story" class="hud card" hidden aria-live="polite"></section>
+  <div id="toast" class="hud card" hidden role="status"></div>
+  <button id="showUI" data-action="hideUI" hidden>Show interface (H)</button>
+
+  <div id="welcome" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="welcomeTitle">
+    <div class="card">
+      <h2 id="welcomeTitle">Welcome to Chelsea</h2>
+      <p class="sub">A little corner of London around Sloane Square and King’s Road. Choose how you’d like to begin; you can change your mind at any time.</p>
+      <div class="choices">
+        <button class="choice" data-action="welcomeFree"><b>Explore freely</b>Wander at your own pace: step anywhere on the pavement, look around and jump to places from the list.</button>
+        <button class="choice primary" data-action="welcomeDiscover"><b>Discover Chelsea</b>Follow a gentle walk past five stops with short stories, collecting six postcards along the way.</button>
+      </div>
+      <p class="tryit" id="tryIt"></p>
+      <p style="margin:10px 0 0"><button data-action="welcomeClose" class="link">Just look around</button></p>
+    </div>
+  </div>
+
+  <div id="cards" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="cardsTitle">
+    <div class="card">
+      <h2 id="cardsTitle">Your Chelsea postcards</h2>
+      <p class="sub" id="cardsSub"></p>
+      <div class="grid" id="cardGrid"></div>
+      <p class="sub" style="font-size:12.5px">Find the place in the clue, frame it, and press <b>Take postcard</b> (or <b>P</b>). To retake a postcard, take it again from the same place. There is no hurry and nothing is lost if you skip one.</p>
+      <p><button id="cardsClose" class="primary">Close</button></p>
+    </div>
+  </div>
+  <div id="bigCard" hidden><figure><img id="bigImg" alt="" /><figcaption><span id="bigCap"></span><button id="bigClose">Close</button></figcaption></figure></div>
+
+  <div id="done" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="doneTitle">
+    <div class="card">
+      <h2 id="doneTitle">You’ve reached the end of the walk</h2>
+      <p id="doneBody"></p>
+      <div class="grid" id="doneGrid"></div>
+      <p class="actions" style="display:flex;gap:8px;flex-wrap:wrap"><button class="primary" data-action="postcards">View postcards</button><button data-action="doneClose">Continue exploring</button><button data-action="home">Return to Sloane Square</button></p>
+    </div>
+  </div>
 
   <div id="vr" class="card"></div>
   <div id="attribution"></div>

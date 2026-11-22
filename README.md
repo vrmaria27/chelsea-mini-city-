@@ -12,6 +12,12 @@ Explore a reconstruction of the streets around **Sloane Square, King's Road and 
 
 This project began as a city-builder ("Chelsea Mini City"). That version is preserved on the `game-final` branch; what changed, how old saves are kept, the remaining approximations and the Quest checklist are in **[docs/explorer.md](docs/explorer.md)**.
 
+## Discover Chelsea (the visitor route)
+
+A first visit starts at street level in Sloane Square with a short welcome: **Explore freely** or **Discover Chelsea**. The route is a gentle walk of about 800 m past five optional stops, each with a short sourced story and optional narration. Along the way you can collect six postcards, which are real renders of the view, kept on your device. It ends quietly at King's Road and Markham Square.
+
+Shortcuts: **P** take a postcard, **C** postcards, **H** hide or show the interface. In VR, **A** takes a postcard and **X/Y** hides the panel. Details, sources, tests and the headset checklist are in [docs/visitor-route.md](docs/visitor-route.md).
+
 ## How to explore
 
 1. **Look at the miniature.** Drag to turn it, scroll to zoom, and use Rotate, Larger and Smaller to adjust the model. The north indicator follows your view.
@@ -286,7 +292,7 @@ Open the printed `https://192.168.x.x:5173/` on the Quest and accept the self-si
 
 ## Manual headset checklist (Quest 3)
 
-Not yet verified on a headset. See [docs/explorer.md](docs/explorer.md#manual-quest-3-checklist), plus the detail checklists in [docs/sloane-square.md](docs/sloane-square.md#manual-headset-checklist-sloane-square) and [docs/square-buildings.md](docs/square-buildings.md#manual-quest-review-checklist-square-buildings).
+Not yet verified on a headset. See [docs/visitor-route.md](docs/visitor-route.md#manual-quest-3-checklist-not-yet-verified-on-a-headset), [docs/explorer.md](docs/explorer.md#manual-quest-3-checklist), plus the detail checklists in [docs/sloane-square.md](docs/sloane-square.md#manual-headset-checklist-sloane-square) and [docs/square-buildings.md](docs/square-buildings.md#manual-quest-review-checklist-square-buildings).
 
 ## Project layout
 
@@ -294,6 +300,8 @@ Not yet verified on a headset. See [docs/explorer.md](docs/explorer.md#manual-qu
 src/main.ts         Desktop camera and input, HTML HUD, WebXR session, controllers, teleport and snap turn
 src/explore/        Exploration state (explorer.ts), walkable surfaces (nav.ts), landmark catalogue (landmarks.ts),
                     preferences (prefs.ts), read-only legacy-save access (legacy.ts). No rendering code
+src/visit/          Visitor route: stops, stories and sources (route.ts), progress and capture rules (visit.ts),
+                    postcard image store (photos.ts), procedural soundscape and narration (audio.ts)
 src/view/           The one 3D scene (miniature and street-level transforms, visibility tiles, markers) and the VR panel
 src/map/            osmMap.ts (scene from bundled OSM data), palette.ts, types
 src/map/landmarks/  Peter Jones; Sloane Square (paving, fountain, memorial, furniture), plane trees, leaf atlas;
@@ -321,5 +329,5 @@ public/             index.html (HUD markup and styles)
 - Most buildings away from the square are approximate masses with flat roofs. The full list, ordered by impact on realism, is in [docs/explorer.md](docs/explorer.md#remaining-visual-approximations-largest-impact-on-realism-first).
 - Road widths are class estimates, so some pavements are narrower than real.
 - Hand tracking without controllers isn't specifically supported.
-- No sound.
+- Sound is synthesised in the browser and narration uses the browser's own speech voices; neither has been checked on a Quest 3.
 - The app needs a WebGL2-capable browser, and shows an explanation where WebGL2 can't start.

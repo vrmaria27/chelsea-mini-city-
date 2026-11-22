@@ -366,6 +366,59 @@ export class ExplorerScene {
     }
   }
 
+  private capFb: { fb: WebGLFramebuffer; color: WebGLRenderbuffer; depth: WebGLRenderbuffer; w: number; h: number } | null = null;
+
+  /**
+   * Renders one view into an offscreen image without any interface (no panel, labels, pointers or
+   * markers) and returns it as a canvas, or null if the result is blank. Used for postcards: one extra
+   * render only when the visitor presses the shutter; the framebuffer is kept for the next one.
+   */
+  captureImage(viewProj: Mat4, eye: Vec3, w: number, h: number, time: number, sky: [number, number, number]): HTMLCanvasElement | null {
+    const gl = this.r.gl;
+    if (!this.capFb || this.capFb.w !== w || this.capFb.h !== h) {
+      if (this.capFb) { gl.deleteFramebuffer(this.capFb.fb); gl.deleteRenderbuffer(this.capFb.color); gl.deleteRenderbuffer(this.capFb.depth); }
+      const fb = gl.createFramebuffer()!, color = gl.createRenderbuffer()!, depth = gl.createRenderbuffer()!;
+      gl.bindRenderbuffer(gl.RENDERBUFFER, color);
+      gl.renderbufferStorage(gl.RENDERBUFFER, gl.RGBA8, w, h);
+      gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
+      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, w, h);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, color);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
+      this.capFb = { fb, color, depth, w, h };
+    }
+    const prevFb = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+    const prevVp = gl.getParameter(gl.VIEWPORT) as Int32Array;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.capFb.fb);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) { gl.bindFramebuffer(gl.FRAMEBUFFER, prevFb); return null; }
+    gl.viewport(0, 0, w, h);
+    gl.clearColor(sky[0], sky[1], sky[2], 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    const keep = { panel: this.showPanel, labels: this.showLabels, msaa: this.r.msaa };
+    this.showPanel = false;
+    this.showLabels = false;
+    this.r.msaa = false; // single-sampled target: hard-edged leaf alpha test
+    this.render(viewProj, eye, { time });
+    this.showPanel = keep.panel;
+    this.showLabels = keep.labels;
+    this.r.msaa = keep.msaa;
+    const px = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, prevFb);
+    gl.viewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
+    // reject a blank frame (everything one colour)
+    let lo = 255, hi = 0;
+    for (let i = 0; i < px.length; i += 4 * 97) { const l = px[i] + px[i + 1] + px[i + 2]; lo = Math.min(lo, l); hi = Math.max(hi, l); }
+    if (hi - lo < 30) return null;
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const c2 = cv.getContext('2d')!;
+    const img = c2.createImageData(w, h);
+    for (let y = 0; y < h; y++) img.data.set(px.subarray((h - 1 - y) * w * 4, (h - y) * w * 4), y * w * 4); // flip: GL rows start at the bottom
+    c2.putImageData(img, 0, 0);
+    return cv;
+  }
+
   private drawMarker(m: Marker): void {
     const s = this.mode === 'street' ? 1 : 9; // readable on the miniature
     compose(this.tmp, m.x, m.y + 0.03, m.z, 0, s);
