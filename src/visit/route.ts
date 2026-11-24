@@ -145,3 +145,30 @@ export const POSTCARDS: readonly Postcard[] = [
 
 /** Where the visit starts and where "Return to Sloane Square" goes. */
 export const HOME = STOPS[0].at;
+
+/**
+ * Peaceful viewpoints: places to stop and simply look. Chosen from the rendered scene: each is on
+ * walkable paving with a clear, attractive view in both lighting presets (tests/visit.test.ts checks
+ * the ground and the sightline to `look`). Standing within `radius` offers "Pause here".
+ */
+export interface Viewpoint {
+  id: string;
+  title: string;
+  /** Short name for small buttons. */
+  short: string;
+  /** Standing position and the heading used when the visitor asks to go there. */
+  at: { x: number; z: number; yaw: number };
+  radius: number;
+  /** A point in the view (map metres) for the sightline check; `ignore` is a building it may touch. */
+  look: { x: number; y: number; z: number; ignore?: string };
+  /** One line shown with the offer. */
+  line: string;
+}
+
+const head = (x: number, z: number, tx: number, tz: number) => Math.round(Math.atan2(-(tx - x), -(tz - z)) * 1000) / 1000;
+
+export const VIEWPOINTS: readonly Viewpoint[] = [
+  { id: 'vp-fountain', title: 'Beside the Venus Fountain', short: 'The fountain', at: { x: 153, z: -151, yaw: head(153, -151, 161.9, -146.9) }, radius: 7, look: { x: 161.9, y: 2, z: -146.9 }, line: 'The fountain, the plane trees and the square around you.' },
+  { id: 'vp-doy', title: 'Duke of York Square', short: 'Duke of York Square', at: { x: -28, z: 28, yaw: head(-28, 28, 20, 10) }, radius: 7, look: { x: 0, y: 4, z: 30 }, line: 'An open square of trees and stone, off King’s Road.' },
+  { id: 'vp-saatchi', title: 'Along the Saatchi Gallery', short: 'Saatchi Gallery', at: { x: 79, z: 84, yaw: head(79, 84, 74.5, 67.7) }, radius: 7, look: { x: 74.5, y: 6, z: 67.7, ignore: 'w5317958' }, line: 'The long yellow-brick front and its portico.' },
+];

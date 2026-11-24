@@ -10,7 +10,9 @@ import { safeLocalStorage } from './explore/prefs';
 import { ExplorerScene, type Marker, type PointerVisual } from './view/scene';
 import type { Action, PanelTab, VisitPanel } from './view/panel';
 import { Visit, bearing, turnWords } from './visit/visit';
-import { HOME, POSTCARDS, STOPS } from './visit/route';
+import { HOME, POSTCARDS, STOPS, VIEWPOINTS } from './visit/route';
+import { PRESETS } from './view/lighting';
+import type { LightMode } from './explore/prefs';
 import { Narrator, Soundscape } from './visit/audio';
 import { PhotoStore } from './visit/photos';
 
@@ -38,6 +40,9 @@ const nav = new NavField(OSM as unknown as NavData);
 const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 const ex = new Explorer(nav, store, prefersReducedMotion);
 if (ex.loadStatus !== 'ok' && ex.loadStatus !== 'none') console.info(`Explorer preferences reset (${ex.loadStatus}).`);
+
+// lighting preset saved from a previous visit (Daylight is what the scene starts with)
+if (ex.prefs.light !== 'day') scene.setLight(ex.prefs.light);
 
 const visit = new Visit(store);
 if (visit.loadStatus !== 'ok' && visit.loadStatus !== 'none') console.info(`Visit progress reset (${visit.loadStatus}).`);
@@ -141,6 +146,7 @@ function selectPlace(id: string): void {
 }
 
 function doAction(a: Action | 'resetView' | 'discover' | 'openRoute'): void {
+  if (visit.paused && a !== 'pauseHere') leavePause();
   startAudio();
   if (a.startsWith('place:')) {
     selectPlace(a.slice(6));
@@ -182,7 +188,15 @@ function doAction(a: Action | 'resetView' | 'discover' | 'openRoute'): void {
     case 'smooth': visit.setSmooth(!visit.state.smooth); break;
     case 'guide': visit.setGuide(!visit.state.guide); break;
     case 'hideUI': visit.setHidden(!visit.state.uiHidden); break;
+    case 'light:day': setLightMode('day'); break;
+    case 'light:golden': setLightMode('golden'); break;
+    case 'doneLight': visit.closeCompletion(); setLightMode(ex.prefs.light === 'day' ? 'golden' : 'day'); break;
+    case 'pauseHere': enterPause(); break;
+    case 'resume': leavePause(); break;
+    case 'replaceYes': finishReplace(true); break;
+    case 'replaceNo': finishReplace(false); break;
   }
+  if (a.startsWith('view:')) goViewpoint(a.slice(5));
   switch (a) {
     case 'toStreet': goStreet(); break;
     case 'toMiniature': goMiniature(); break;
@@ -231,6 +245,7 @@ document.addEventListener('click', (e) => {
   if (b && !b.disabled) doAction(b.dataset.action as Action);
 });
 
+$('vpList').innerHTML = VIEWPOINTS.map((v) => `<li><button data-action="view:${esc(v.id)}" title="${esc(v.line)}">${esc(v.title)}</button></li>`).join('');
 $('placeList').innerHTML = LANDMARKS.map((l) => `<li><button data-action="place:${esc(l.id)}" aria-current="false">${esc(l.name)}${l.street ? '' : '<small>Shown on the miniature</small>'}</button></li>`).join('');
 
 function renderHud(): void {
@@ -481,7 +496,7 @@ const endPointer = (e: PointerEvent) => {
   const p = pointers.get(e.pointerId);
   pointers.delete(e.pointerId);
   if (p && dragged && ex.mode === 'street') ex.commit();
-  if (p && !dragged && pointers.size === 0 && p.button === 0 && e.type === 'pointerup') clickGround(e.clientX, e.clientY);
+  if (p && !dragged && pointers.size === 0 && p.button === 0 && e.type === 'pointerup' && !visit.paused) clickGround(e.clientX, e.clientY);
   if (pointers.size < 2) pinchDist = 0;
 };
 canvas.addEventListener('pointerup', endPointer);
@@ -528,6 +543,11 @@ const keys = new Set<string>();
 window.addEventListener('keydown', (e) => {
   if ((e.target as HTMLElement).tagName === 'INPUT') return;
   startAudio();
+  // paused at a viewpoint: any key (other than a lone modifier) brings the interface back
+  if (visit.paused) {
+    if (!['shift', 'control', 'alt', 'meta'].includes(e.key.toLowerCase())) { leavePause(); e.preventDefault(); }
+    return;
+  }
   const k = e.key.toLowerCase();
   if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'shift'].includes(k)) {
     if (ex.mode === 'street') {
@@ -594,6 +614,7 @@ function updateLabelVisibility(e: Vec3): void {
 
 function markersFor(h: GroundHit | null): Marker[] {
   const out: Marker[] = [];
+  if (visit.paused) return out; // a quiet view: no cursors or rings
   if (ex.mode === 'miniature') {
     const p = ex.pick;
     out.push({ x: p.x, z: p.z, y: nav.groundY(p.x, p.z), ok: true, yaw: p.yaw });
@@ -626,7 +647,7 @@ function desktopFrame(time: number): void {
   if (ex.mode === 'miniature') updateLabelVisibility(eye);
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.viewport(0, 0, canvas.width, canvas.height);
-  if (ex.mode === 'street') gl.clearColor(0.74, 0.82, 0.88, 1);
+  if (ex.mode === 'street') gl.clearColor(...scene.skyColor, 1);
   else gl.clearColor(0.913, 0.89, 0.847, 1);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   scene.showFurniture = false;
@@ -696,13 +717,16 @@ async function enterVR(): Promise<void> {
     floorSpace = false;
   }
   xrSession = session;
-  scene.showPanel = !visit.state.uiHidden;
+  scene.showPanel = !visit.state.uiHidden && !visit.paused;
   recenterPending = true;
   if (ex.mode === 'street') xrPlacePending = 'enter';
   vrBox.hidden = true;
   if (document.pointerLockElement) document.exitPointerLock();
   session.addEventListener('end', onXREnd);
   session.addEventListener('select', (ev) => onSelect(ev as XRInputSourceEvent));
+  // pressing the trigger while paused resumes at once; its release (the select event) then does nothing
+  session.addEventListener('selectstart', () => { if (visit.paused) { leavePause(); swallowSelect = true; } });
+  session.addEventListener('squeezestart', () => { if (visit.paused) leavePause(); });
   session.addEventListener('inputsourceschange', () => ctrls.clear());
   syncPanel();
   session.requestAnimationFrame(xrFrame);
@@ -725,6 +749,8 @@ function onXREnd(): void {
 
 function onSelect(ev: XRInputSourceEvent): void {
   startAudio();
+  if (visit.paused) { leavePause(); return; } // a trigger ends the pause; nothing else happens
+  if (swallowSelect) { swallowSelect = false; return; } // the release of the trigger that resumed
   primary = ev.inputSource;
   const st = ctrls.get(ev.inputSource);
   if (!st) return;
@@ -795,12 +821,22 @@ function headOnMap(pose: XRViewerPose): { x: number; z: number; yaw: number } {
 
 function syncPanel(): void {
   if (!xrSession) return;
+  buildPanel();
+}
+
+/** Lays out the VR panel from the current state (also used by the desktop checks of its layouts). */
+function buildPanel(): void {
   const l = ex.selected, n = ex.notice;
   let title = ex.mode === 'street' ? 'Street level' : 'Miniature';
   let body = ex.mode === 'street'
     ? 'Point at the pavement and pull the trigger to step there. Flick the thumbstick left or right to turn.'
     : 'Point at the pavement or the square and pull the trigger to choose a spot, then “Go to street level”. Thumbstick: rotate and resize.';
   let warn = false;
+  const vpHere = ex.mode === 'street' && !visit.paused ? visit.viewpointAt(ex.street.x, ex.street.z) : null;
+  if (vpHere && !l) {
+    title = vpHere.title;
+    body = `${vpHere.line} Pause here hides the panel and the guidance; any button brings them back.`;
+  }
   if (l) {
     title = l.name;
     body = l.description;
@@ -822,7 +858,8 @@ function syncPanel(): void {
     visit: visitPanel(),
   }, panelImagesChanged);
   panelImagesChanged = false;
-  scene.showPanel = !visit.state.uiHidden;
+  // a waiting Replace/Keep choice always shows the panel, even if the visitor had hidden it
+  scene.showPanel = (!visit.state.uiHidden || !!pendingReplace) && !visit.paused;
 }
 
 const panelOffset = mat4();
@@ -937,7 +974,7 @@ function xrFrame(time: number, frame: XRFrame): void {
     visuals.push(st.visual);
     if (!primary) primary = src;
     if (ph?.action) panelHover = ph.action;
-    if (st.ground && (src === primary || !holdsPanel)) markers.push({ x: st.ground.x, z: st.ground.z, y: st.ground.y, ok: st.ground.ok, yaw: null });
+    if (st.ground && !visit.paused && (src === primary || !holdsPanel)) markers.push({ x: st.ground.x, z: st.ground.z, y: st.ground.y, ok: st.ground.ok, yaw: null });
     handleThumbstick(src, st);
     handleButtons(src, st);
   }
@@ -951,7 +988,7 @@ function xrFrame(time: number, frame: XRFrame): void {
 
   const layer = session.renderState.baseLayer!;
   gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
-  if (ex.mode === 'street') gl.clearColor(0.74, 0.82, 0.88, 1);
+  if (ex.mode === 'street') gl.clearColor(...scene.skyColor, 1);
   else gl.clearColor(0.86, 0.84, 0.8, 1);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   scene.showFurniture = ex.mode === 'miniature';
@@ -963,7 +1000,7 @@ function xrFrame(time: number, frame: XRFrame): void {
     const p = v.transform.position;
     xrEye[0] = p.x; xrEye[1] = p.y; xrEye[2] = p.z;
     if (v === pose.views[0] && ex.mode === 'miniature') updateLabelVisibility(xrEye);
-    scene.render(xrViewProj, xrEye, { pointers: visuals, markers, pin: pinFor(), fade: xrFade, time: time / 1000 });
+    scene.render(xrViewProj, xrEye, { pointers: visit.paused ? [] : visuals, markers, pin: pinFor(), fade: xrFade, time: time / 1000 });
   }
 }
 
@@ -1014,7 +1051,6 @@ let routeCardOpen = false;
 let captureMsg: string | null = null;
 let panelImagesChanged = false;
 let pendingVrCapture: 'button' | 'shutter' | null = null;
-const SKY: [number, number, number] = [0.74, 0.82, 0.88];
 
 /** Audio may only start after a user action; harmless to call often. */
 function startAudio(): void {
@@ -1077,7 +1113,7 @@ function toast(text: string, good = false): void {
 
 /** Ring on the pavement a few metres along the route (only while following it, and only if wanted). */
 function guideMarker(): Marker | null {
-  if (ex.mode !== 'street' || visit.state.mode !== 'discover' || !visit.state.guide || visit.openStop) return null;
+  if (ex.mode !== 'street' || visit.state.mode !== 'discover' || !visit.state.guide || visit.openStop || visit.paused) return null;
   const g = visit.guidance(ex.street.x, ex.street.z);
   if (!g || g.remaining < 6) return null;
   return { x: g.x, z: g.z, y: nav.groundY(g.x, g.z), ok: true, yaw: null };
@@ -1092,13 +1128,20 @@ function guideText(): string | null {
 }
 
 let lastGuide = 0;
+let lastVp: unknown = null;
 function tickGuide(time: number): void {
   if (time - lastGuide < 300) return;
   lastGuide = time;
   const pill = $('guidePill');
   const txt = guideText();
-  const show = !!txt && !visit.openStop && !routeCardOpen && !visit.showWelcome;
+  const vpHere = ex.mode === 'street' && !visit.paused && !xrSession ? visit.viewpointAt(ex.street.x, ex.street.z) : null;
+  const calm = !visit.openStop && !routeCardOpen && !visit.showWelcome && !pendingReplace && !visit.showCompletion;
+  const pp = $('pausePill');
+  pp.hidden = !(vpHere && calm);
+  if (vpHere && calm && $('pauseTitle').textContent !== vpHere.title) { $('pauseTitle').textContent = vpHere.title; $('pauseLine').textContent = vpHere.line; }
+  const show = !!txt && calm && !vpHere;
   pill.hidden = !show;
+  if (xrSession && vpHere !== lastVp) { lastVp = vpHere; syncPanel(); }
   if (show) {
     const g = visit.guidance(ex.street.x, ex.street.z)!;
     const turn = bearing(ex.street.x, ex.street.z, g.x, g.z) - ex.street.yaw;
@@ -1116,9 +1159,12 @@ function visitPanel(): VisitPanel {
     story: st ? { title: st.title, text: st.story, detail: st.detail, showDetail } : null,
     next: guideText(), narration: n,
     stopsDone: visit.state.visited.length, stopsTotal: STOPS.length,
-    cards: POSTCARDS.map((p) => ({ id: p.id, place: p.place, clue: p.clue, hint: p.hint, have: p.id in visit.state.postcards })),
+    cards: POSTCARDS.map((p) => ({ id: p.id, place: p.place, clue: p.clue, hint: p.hint, have: p.id in visit.state.postcards, light: visit.postcardLightOf(p.id) })),
     selectedCard, showHint, cardCount: visit.postcardCount, message: captureMsg,
     sound: { ...visit.state.sound }, smooth: visit.state.smooth, guide: visit.state.guide,
+    light: ex.prefs.light,
+    viewpoint: (() => { const v = ex.mode === 'street' && !visit.paused ? visit.viewpointAt(ex.street.x, ex.street.z) : null; return v ? { title: v.title, line: v.line } : null; })(),
+    replace: pendingReplace ? { id: pendingReplace.id, place: pendingReplace.place, oldLight: visit.postcardLightOf(pendingReplace.id) ?? 'day', newLight: pendingReplace.light } : null,
   };
 }
 
@@ -1131,20 +1177,112 @@ function captureMessage(r: ReturnType<Visit['checkCapture']>): string {
   return `Something is in the way of ${r.postcard.place}. Try a step or two to the side.`;
 }
 
-/** Saves an image as a postcard and tells the visitor. */
+/**
+ * Saves an image as a postcard and tells the visitor. A retake doesn't overwrite anything yet: the new
+ * photo is shown beside the current one and the visitor chooses to replace it or keep the old one.
+ */
 function keepPostcard(id: string, place: string, retake: boolean, cv: HTMLCanvasElement | null): void {
   if (!cv) { toast('The camera didn’t catch that one. Please try again.'); return; }
+  const light = ex.prefs.light;
   const done = (blob: Blob | null) => {
     if (!blob) { toast('The camera didn’t catch that one. Please try again.'); return; }
-    visit.award(id);
-    photos.put(id, blob).then((saved) => {
-      loadPanelImage(id);
-      if (!saved) toast(`${retake ? 'Retaken' : 'Postcard collected'}: ${place}. (This device can’t store photos, so it will last until you close the page.)`, true);
-    });
-    toast(`${retake ? 'Postcard retaken' : 'Postcard collected'}: ${place} · ${visit.postcardCount} of 6`, true);
-    if (!$('cards').hidden) showCards();
+    if (retake) { offerReplace(id, place, blob, light); return; }
+    storePostcard(id, place, blob, light, false);
   };
   try { cv.toBlob(done, 'image/jpeg', 0.82); } catch { done(null); }
+}
+
+function storePostcard(id: string, place: string, blob: Blob, light: LightMode, replaced: boolean): void {
+  visit.award(id, Date.now(), light);
+  const lightWord = light === 'golden' ? ' (golden hour)' : '';
+  photos.put(id, blob).then((saved) => {
+    loadPanelImage(id);
+    if (!saved) toast(`${replaced ? 'Replaced' : 'Postcard collected'}: ${place}${lightWord}. (This device can’t store photos, so it will last until you close the page.)`, true);
+    if (!$('cards').hidden) showCards();
+  });
+  toast(`${replaced ? 'Postcard replaced' : 'Postcard collected'}: ${place}${lightWord} · ${visit.postcardCount} of 6`, true);
+}
+
+// ---- replacing a postcard: preview, then Replace or Keep ----------------------------------------
+
+let pendingReplace: { id: string; place: string; blob: Blob; url: string; light: LightMode } | null = null;
+
+function offerReplace(id: string, place: string, blob: Blob, light: LightMode): void {
+  if (pendingReplace) URL.revokeObjectURL(pendingReplace.url);
+  pendingReplace = { id, place, blob, url: URL.createObjectURL(blob), light };
+  const im = new Image();
+  im.onload = () => { scene.panel.images.set(`${id}:new`, im); panelImagesChanged = true; syncPanel(); };
+  im.src = pendingReplace.url;
+  // desktop: the two photos side by side
+  photos.url(id).then((old) => {
+    if (!pendingReplace || pendingReplace.id !== id) return;
+    ($('repOld') as HTMLImageElement).src = old ?? '';
+    $('repOld').hidden = !old;
+    $('repOldMissing').hidden = !!old;
+    $('repOldCap').textContent = `Current · ${PRESETS[visit.postcardLightOf(id) ?? 'day'].label}`;
+    ($('repNew') as HTMLImageElement).src = pendingReplace.url;
+    $('repNewCap').textContent = `New · ${PRESETS[light].label}`;
+    $('repPlace').textContent = place;
+    if (!xrSession) $('replace').hidden = false;
+  });
+  syncPanel();
+}
+
+function finishReplace(replace: boolean): void {
+  const r = pendingReplace;
+  if (!r) return;
+  pendingReplace = null;
+  $('replace').hidden = true;
+  scene.panel.images.delete(`${r.id}:new`);
+  panelImagesChanged = true;
+  if (replace) storePostcard(r.id, r.place, r.blob, r.light, true);
+  else toast(`Kept your current postcard of ${r.place}.`);
+  setTimeout(() => URL.revokeObjectURL(r.url), 2000);
+  syncPanel();
+}
+
+// ---- lighting presets -----------------------------------------------------------------------------
+
+/**
+ * Switches Daylight / Golden hour where the visitor stands: a short fade (none with reduced motion)
+ * hides the re-bake of the sun shadows. Position, heading, route progress, postcards and sound are
+ * untouched; the choice is saved with the other preferences.
+ */
+function setLightMode(m: LightMode): void {
+  if (ex.prefs.light === m && scene.preset.mode === m) return;
+  transition(() => {
+    scene.setLight(m);
+    ex.setLight(m);
+    renderVisit();
+  });
+}
+
+// ---- peaceful viewpoints ----------------------------------------------------------------------------
+
+/** "Pause here": hides the interface, guidance, labels and pointers. The camera is not touched. */
+function enterPause(): void {
+  if (ex.mode !== 'street') return;
+  narrator.stop();
+  routeCardOpen = false;
+  visit.setPaused(true);
+}
+
+function leavePause(): void {
+  if (!visit.paused) return;
+  visit.setPaused(false);
+}
+let swallowSelect = false;
+
+/** Goes to a viewpoint when the visitor asks: the usual fade and placement, like any other place. */
+function goViewpoint(id: string): void {
+  const v = VIEWPOINTS.find((x) => x.id === id);
+  if (!v) return;
+  routeCardOpen = false;
+  transition(() => {
+    ex.enterStreet({ ...v.at });
+    streetPitch = 0;
+    if (xrSession) xrPlacePending = 'enter';
+  });
 }
 
 /** Desktop: the photograph is the current view (same position, heading and tilt) at 3:2. */
@@ -1159,7 +1297,7 @@ function takePostcard(src: 'button' | 'shutter'): void {
   lookAt(v, e, [e[0] - Math.sin(y) * Math.cos(p), e[1] + Math.sin(p), e[2] - Math.cos(y) * Math.cos(p)]);
   perspective(pr, (55 * Math.PI) / 180, 1.5, 0.1, 900);
   multiply(vp, pr, v);
-  keepPostcard(r.postcard.id, r.postcard.place, r.retake, scene.captureImage(vp, e, 768, 512, performance.now() / 1000, SKY));
+  keepPostcard(r.postcard.id, r.postcard.place, r.retake, scene.captureImage(vp, e, 768, 512, performance.now() / 1000, scene.skyColor));
 }
 
 /**
@@ -1182,7 +1320,7 @@ function takePostcardVR(pose: XRViewerPose, src: 'button' | 'shutter'): void {
   lookAt(v, eyeW, [p.x + (fx / fl) * Math.cos(pitch), p.y + Math.sin(pitch), p.z + (fz / fl) * Math.cos(pitch)]);
   perspective(pr, (55 * Math.PI) / 180, 1.5, 0.05, 900);
   multiply(vp, pr, v);
-  keepPostcard(r.postcard.id, r.postcard.place, r.retake, scene.captureImage(vp, eyeW, 768, 512, performance.now() / 1000, SKY));
+  keepPostcard(r.postcard.id, r.postcard.place, r.retake, scene.captureImage(vp, eyeW, 768, 512, performance.now() / 1000, scene.skyColor));
 }
 
 function loadPanelImage(id: string): void {
@@ -1199,14 +1337,25 @@ function showCards(): void {
   $('cardsSub').textContent = `${visit.postcardCount} of 6 postcards${visit.postcardCount === 6 ? '. A full set: lovely.' : ''}${photos.persistent ? '' : ' · This browser can’t keep photos after you close the page.'}`;
   $('cardGrid').innerHTML = POSTCARDS.map((p) => {
     const have = p.id in visit.state.postcards;
-    return `<div class="slot"><div class="ph" id="ph-${p.id}">${have ? '…' : '?'}</div><b>${esc(p.place)}</b><span class="clue">${esc(p.clue)}</span><details><summary class="clue">Hint</summary><span class="hint">${esc(p.hint)}</span></details></div>`;
+    const lt = visit.postcardLightOf(p.id);
+    return `<div class="slot"><div class="ph" id="ph-${p.id}">${have ? '…' : '?'}${lt ? `<span class="lt ${lt}">${PRESETS[lt].label}</span>` : ''}</div><b>${esc(p.place)}</b><span class="clue">${esc(p.clue)}</span><details><summary class="clue">Hint</summary><span class="hint">${esc(p.hint)}</span></details></div>`;
   }).join('');
   for (const p of POSTCARDS) if (p.id in visit.state.postcards) photos.url(p.id).then((u) => {
     const el = document.getElementById(`ph-${p.id}`);
     if (!el) return;
-    if (!u) { el.textContent = '✓'; return; }
-    el.innerHTML = `<img src="${u}" alt="Postcard: ${esc(p.place)}" />`;
-    el.querySelector('img')!.addEventListener('click', () => { ($('bigImg') as HTMLImageElement).src = u; ($('bigImg') as HTMLImageElement).alt = `Postcard: ${p.place}`; $('bigCap').textContent = p.place; $('bigCard').hidden = false; });
+    const lt = visit.postcardLightOf(p.id) ?? 'day';
+    const badge = `<span class="lt ${lt}">${PRESETS[lt].label}</span>`;
+    if (!u) { el.innerHTML = `✓${badge}`; return; }
+    el.innerHTML = `<img src="${u}" alt="Postcard: ${esc(p.place)}" />${badge}`;
+    el.querySelector('img')!.addEventListener('click', () => {
+      ($('bigImg') as HTMLImageElement).src = u;
+      ($('bigImg') as HTMLImageElement).alt = `Postcard: ${p.place}`;
+      $('bigCap').textContent = `${p.place} · ${PRESETS[lt].label}`;
+      const dl = $('bigDl') as HTMLAnchorElement;
+      dl.href = u;
+      dl.download = `chelsea-postcard-${p.id}-${lt === 'golden' ? 'golden-hour' : 'daylight'}.jpg`;
+      $('bigCard').hidden = false;
+    });
   });
   $('cards').hidden = false;
 }
@@ -1226,6 +1375,10 @@ function renderVisit(): void {
   sound.set(st.sound);
   if (st.sound.muted || !st.sound.narration) narrator.stop();
   document.body.classList.toggle('uihidden', st.uiHidden);
+  document.body.classList.toggle('paused', visit.paused);
+  scene.showLabels = ex.prefs.labels && !visit.paused;
+  $('resumeBtn').hidden = !visit.paused;
+  for (const m of ['day', 'golden'] as const) $(`optLight-${m}`).setAttribute('aria-pressed', String(ex.prefs.light === m));
   $('showUI').hidden = !st.uiHidden;
   $('welcome').hidden = !visit.showWelcome;
   $('btnCards').textContent = `Postcards ${visit.postcardCount}/6`;
@@ -1260,6 +1413,7 @@ function renderVisit(): void {
   if (visit.showCompletion && !visit.openStop && $('done').hidden) {
     $('doneBody').textContent = `From the Venus Fountain to Markham Square: ${st.visited.length} of ${STOPS.length} stops and ${visit.postcardCount} of 6 postcards. Any you missed will be waiting whenever you come back.`;
     $('doneGrid').innerHTML = POSTCARDS.map((p) => `<div class="slot"><div class="ph" id="dph-${p.id}">${p.id in st.postcards ? '…' : '?'}</div><b>${esc(p.place)}</b></div>`).join('');
+    $('doneLightBtn').textContent = ex.prefs.light === 'day' ? 'Explore at golden hour' : 'Explore in daylight';
     for (const p of POSTCARDS) if (p.id in st.postcards) photos.url(p.id).then((u) => { const el = document.getElementById(`dph-${p.id}`); if (el) el.innerHTML = u ? `<img src="${u}" alt="Postcard: ${esc(p.place)}" />` : '✓'; });
     $('done').hidden = false;
   }
@@ -1288,9 +1442,12 @@ function handleButtons(src: XRInputSource, st: CtrlState): void {
   const was = st.buttons ?? now.map(() => false);
   st.buttons = now;
   const pressed = (i: number) => now[i] && !was[i];
+  // paused: A/B/X/Y or a thumbstick click resumes (the trigger and grip resume through their own
+  // select/squeeze events, so a trigger pull never also steps somewhere)
+  if (visit.paused) { if (now.some((p, i) => i >= 3 && p && !was[i])) leavePause(); return; }
   if (src.handedness === 'right' && pressed(4)) { startAudio(); takePostcard('shutter'); }
   if (src.handedness === 'left' && (pressed(4) || pressed(5))) doAction('hideUI');
 }
 
 // A tiny debug hook for automated desktop checks.
-(window as unknown as { __explorer: unknown }).__explorer = { ex, scene, nav, cam, doAction, selectPlace, goStreet, goMiniature, setPitch: (p: number) => (streetPitch = p), visit, photos, narrator, sound };
+(window as unknown as { __explorer: unknown }).__explorer = { ex, scene, nav, cam, doAction, selectPlace, goStreet, goMiniature, setPitch: (p: number) => (streetPitch = p), visit, photos, narrator, sound, buildPanel, setPanelTab: (t: PanelTab) => (panelTab = t) };

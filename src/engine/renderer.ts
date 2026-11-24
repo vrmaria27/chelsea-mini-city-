@@ -36,10 +36,16 @@ uniform highp sampler2DShadow uShadowN;
 uniform highp sampler2DShadow uShadowF;
 uniform sampler2D uAO;     // r: contact occlusion, g+b: ground height (16-bit, 0..64 m)
 uniform highp vec4 uAORect; // x0, z1 (north edge is v = 1), 1/size, on
+// lighting preset (renderer.light): sun colour, ambient from the sky and from the ground, reflected sky
+uniform vec3 uSunCol;
+uniform vec3 uAmbSky;
+uniform vec3 uAmbGnd;
+uniform vec3 uSkyZen;
+uniform vec3 uSkyHor;
 in highp vec3 vSN;
 in highp vec3 vSF;
 in highp vec2 vAOuv;
-const vec3 SUN = vec3(1.0, 0.94, 0.84) * 1.35;
+#define SUN uSunCol
 vec3 lin(vec3 c) { return c * c * (c * 0.305306 + 0.682171) + c * 0.012522; }
 vec3 tonemap(vec3 x) {
   x *= uExposure;
@@ -48,12 +54,12 @@ vec3 tonemap(vec3 x) {
 }
 vec3 ambient(vec3 n) {
   // sky above, warm bounce from the paving below
-  return mix(vec3(0.27, 0.245, 0.21), vec3(0.47, 0.50, 0.56), 0.5 + 0.5 * n.y);
+  return mix(uAmbGnd, uAmbSky, 0.5 + 0.5 * n.y);
 }
 /** Reflection environment: sky gradient, a band of dark surroundings at the horizon, paving below. */
 vec3 envSky(vec3 d) {
   float h = d.y;
-  vec3 zen = vec3(0.20, 0.36, 0.70), hor = vec3(0.62, 0.70, 0.80);
+  vec3 zen = uSkyZen, hor = uSkyHor;
   vec3 s = mix(hor, zen, pow(clamp(h, 0.0, 1.0), 0.55));
   float town = smoothstep(0.22, 0.02, h) * step(-0.02, h);
   s = mix(s, vec3(0.16, 0.15, 0.14), town * 0.7);
@@ -439,7 +445,7 @@ export interface Lighting {
 }
 
 const NO_TINT = [0, 0, 0, 0] as const;
-const SHADE_UNIFORMS = ['uSunDir', 'uExposure', 'uShade', 'uQuality', 'uEye', 'uShadowN', 'uShadowF', 'uShadowMN', 'uShadowMF', 'uAO', 'uAORect', 'uDetail', 'uSurf'];
+const SHADE_UNIFORMS = ['uSunDir', 'uSunCol', 'uAmbSky', 'uAmbGnd', 'uSkyZen', 'uSkyHor', 'uExposure', 'uShade', 'uQuality', 'uEye', 'uShadowN', 'uShadowF', 'uShadowMN', 'uShadowMF', 'uAO', 'uAORect', 'uDetail', 'uSurf'];
 const IDENT = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 /** Texture units: 0 per-draw, 1–2 shadow maps, 3 contact shading, 4–5 material arrays. */
 const U_SHN = 1, U_SHF = 2, U_AO = 3, U_DET = 4, U_SURF = 5;
@@ -457,6 +463,14 @@ export class Renderer {
   /** Direction to the sun in map space. */
   sunDir: [number, number, number];
   exposure = 1.0;
+  /** Lighting colours (linear): the daylight baseline until a preset is applied (view/lighting.ts). */
+  light = {
+    sun: [1.35, 1.269, 1.134] as [number, number, number],
+    ambSky: [0.47, 0.50, 0.56] as [number, number, number],
+    ambGnd: [0.27, 0.245, 0.21] as [number, number, number],
+    skyZen: [0.20, 0.36, 0.70] as [number, number, number],
+    skyHor: [0.62, 0.70, 0.80] as [number, number, number],
+  };
   /** Surface detail textures and normal maps (off with Low detail). */
   quality = 1;
   /** Eye position in map space (specular highlights and reflections). */
@@ -553,6 +567,9 @@ export class Renderer {
   private shading(p: Program, world: boolean): void {
     const gl = this.gl, u = p.u, L = this.baking ? null : this.lighting;
     gl.uniform3fv(u.uSunDir, this.sunDir);
+    const lc = this.light;
+    gl.uniform3fv(u.uSunCol, lc.sun); gl.uniform3fv(u.uAmbSky, lc.ambSky); gl.uniform3fv(u.uAmbGnd, lc.ambGnd);
+    gl.uniform3fv(u.uSkyZen, lc.skyZen); gl.uniform3fv(u.uSkyHor, lc.skyHor);
     gl.uniform1f(u.uExposure, this.exposure);
     gl.uniform1f(u.uShade, world && L ? 1 : 0);
     gl.uniform1f(u.uQuality, this.quality);

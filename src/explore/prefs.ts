@@ -25,13 +25,17 @@ export interface ExplorerPrefs {
   snapTurnDeg: 30 | 45;
   /** VR: raise the street-level view to standing eye height while seated. */
   seated: boolean;
+  /** Lighting preset: bright daylight or warm late-afternoon light (added later; older saves read as 'day'). */
+  light: LightMode;
 }
+
+export type LightMode = 'day' | 'golden';
 
 export const SCALE_MIN = 0.6;
 export const SCALE_MAX = 1.8;
 
 export function defaultPrefs(reducedMotion = false): ExplorerPrefs {
-  return { version: PREFS_VERSION, viewpoint: null, miniature: { yaw: 0, scale: 1 }, labels: true, lowDetail: false, reducedMotion, snapTurnDeg: 30, seated: false };
+  return { version: PREFS_VERSION, viewpoint: null, miniature: { yaw: 0, scale: 1 }, labels: true, lowDetail: false, reducedMotion, snapTurnDeg: 30, seated: false, light: 'day' };
 }
 
 export interface LoadResult {
@@ -78,6 +82,7 @@ export function loadPrefs(store: KeyValueStore, validViewpoint: (x: number, z: n
     reducedMotion: bool(o.reducedMotion, d.reducedMotion),
     snapTurnDeg: o.snapTurnDeg === 45 ? 45 : 30,
     seated: bool(o.seated, d.seated),
+    light: o.light === 'golden' ? 'golden' : 'day',
   };
   let status: LoadResult['status'] = 'ok';
   const v = o.viewpoint as Record<string, unknown> | null | undefined;

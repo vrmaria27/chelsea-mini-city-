@@ -70,6 +70,25 @@
     #story .meta { color: var(--soft); font-size: 12.5px; }
     #toast { bottom: 148px; left: 50%; transform: translateX(-50%); padding: 9px 14px; font-size: 14px; max-width: min(520px, 92vw); text-align: center; }
     #toast.good { border-color: #9fbcab; }
+    .lightseg { display: flex; width: 100%; }
+    .lightseg button { flex: 1; font-size: 13px; padding: 7px 6px; }
+    #vpList { list-style: none; margin: 0; padding: 0; }
+    #pausePill { bottom: 96px; left: 50%; transform: translateX(-50%); padding: 8px 10px 8px 14px; display: flex; gap: 12px; align-items: center; font-size: 13.5px; max-width: min(560px, 92vw); }
+    #pausePill b { display: block; font-size: 14px; }
+    #pausePill span { color: var(--soft); font-size: 12.5px; }
+    #resumeBox { position: fixed; z-index: 3; bottom: 22px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; opacity: 0.9; }
+    #resumeBox span { font-size: 12px; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.6); }
+    body.paused #resumeBox { display: flex !important; }
+    body.paused .hud, body.paused #vr, body.paused #attribution, body.paused #showUI { display: none !important; }
+    .ph { position: relative; }
+    .lt { position: absolute; left: 6px; bottom: 6px; font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 9px; background: rgba(250,246,238,0.88); color: var(--soft); }
+    .lt.golden { color: #8a5a17; }
+    .rep { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .rep figure { margin: 0; }
+    .rep img { width: 100%; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 8px; background: #eee6d8; display: block; }
+    .rep .missing { aspect-ratio: 3 / 2; border-radius: 8px; background: #eee6d8; display: grid; place-items: center; color: var(--soft); font-size: 13px; text-align: center; padding: 8px; }
+    .rep figcaption { font-size: 13px; color: var(--soft); margin-top: 4px; }
+    .btnlink { font: inherit; font-size: 13.5px; padding: 6px 12px; border-radius: 9px; border: 1px solid var(--line); background: #fff; color: var(--ink); text-decoration: none; margin-left: auto; margin-right: 8px; }
     #showUI { position: fixed; z-index: 3; top: 12px; right: 12px; padding: 8px 12px; font-size: 13px; }
     #welcome .card, #done .card { width: min(640px, 94vw); }
     .choices { display: grid; gap: 10px; margin: 14px 0; }
@@ -128,6 +147,8 @@
   <nav id="places" class="hud card" aria-label="Places">
     <h2>Places</h2>
     <ul id="placeList"></ul>
+    <h2 style="margin-top:8px">Quiet viewpoints</h2>
+    <ul id="vpList"></ul>
   </nav>
 
   <aside id="side" class="hud card" aria-label="View and settings">
@@ -148,6 +169,11 @@
       <button id="lockBtn" style="width:100%;margin-top:6px">Look with the mouse</button>
       <p class="sub" style="font-size:11.5px;margin:4px 2px 0;color:var(--soft)">Captures the pointer so moving the mouse looks around. Press <b>Esc</b> to release it.</p>
     </div>
+    <h2 style="margin-top:6px">Light</h2>
+    <div class="seg lightseg" role="group" aria-label="Lighting">
+      <button data-action="light:day" id="optLight-day" aria-pressed="true" title="Bright daylight">Daylight</button>
+      <button data-action="light:golden" id="optLight-golden" aria-pressed="false" title="Warm late-afternoon light">Golden hour</button>
+    </div>
     <h2 style="margin-top:6px">Settings</h2>
     <button data-action="labels" id="optLabels" aria-pressed="true">Labels: on</button>
     <button data-action="lowDetail" id="optDetail" aria-pressed="false">Low detail: off</button>
@@ -166,6 +192,8 @@
   <section id="story" class="hud card" hidden aria-live="polite"></section>
   <div id="toast" class="hud card" hidden role="status"></div>
   <button id="showUI" data-action="hideUI" hidden>Show interface (H)</button>
+  <div id="pausePill" class="hud card" hidden aria-live="polite"><div><b id="pauseTitle"></b><span id="pauseLine"></span></div><button class="primary" data-action="pauseHere">Pause here</button></div>
+  <div id="resumeBox" hidden><button id="resumeBtn" data-action="resume" hidden>Continue exploring</button><span>Drag to look around · any key continues</span></div>
 
   <div id="welcome" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="welcomeTitle">
     <div class="card">
@@ -189,14 +217,26 @@
       <p><button id="cardsClose" class="primary">Close</button></p>
     </div>
   </div>
-  <div id="bigCard" hidden><figure><img id="bigImg" alt="" /><figcaption><span id="bigCap"></span><button id="bigClose">Close</button></figcaption></figure></div>
+  <div id="bigCard" hidden><figure><img id="bigImg" alt="" /><figcaption><span id="bigCap"></span><a id="bigDl" class="btnlink" download>Download</a><button id="bigClose">Close</button></figcaption></figure></div>
 
   <div id="done" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="doneTitle">
     <div class="card">
       <h2 id="doneTitle">You’ve reached the end of the walk</h2>
       <p id="doneBody"></p>
       <div class="grid" id="doneGrid"></div>
-      <p class="actions" style="display:flex;gap:8px;flex-wrap:wrap"><button class="primary" data-action="postcards">View postcards</button><button data-action="doneClose">Continue exploring</button><button data-action="home">Return to Sloane Square</button></p>
+      <p class="actions" style="display:flex;gap:8px;flex-wrap:wrap"><button class="primary" data-action="postcards">View my postcards</button><button data-action="doneLight" id="doneLightBtn">Explore at golden hour</button><button data-action="doneClose">Continue exploring</button></p>
+    </div>
+  </div>
+
+  <div id="replace" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="repTitle">
+    <div class="card">
+      <h2 id="repTitle">Replace your postcard?</h2>
+      <p class="sub"><b id="repPlace"></b>: you already have this postcard. Keep the one you have, or replace it with the new photo.</p>
+      <div class="rep">
+        <figure><img id="repOld" alt="Your current postcard" /><div id="repOldMissing" class="missing" hidden>This device didn’t keep the photo</div><figcaption id="repOldCap"></figcaption></figure>
+        <figure><img id="repNew" alt="The new photo" /><figcaption id="repNewCap"></figcaption></figure>
+      </div>
+      <p class="actions" style="display:flex;gap:8px;flex-wrap:wrap"><button class="primary" data-action="replaceYes">Replace with the new photo</button><button data-action="replaceNo">Keep the current one</button></p>
     </div>
   </div>
 

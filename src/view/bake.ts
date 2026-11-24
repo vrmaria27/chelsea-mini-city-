@@ -88,34 +88,68 @@ function compile(gl: WebGL2RenderingContext, vs: string, fs: string): WebGLProgr
   return p;
 }
 
+/** Renders one orthographic sun shadow map centred on (cx, cz). Expects renderer.baking and polygon offset set. */
+function sunPass(r: Renderer, scene: BakeScene, cx: number, cz: number, h: number, size: number, reuse?: WebGLTexture): { tex: WebGLTexture; m: Float32Array } {
+  const gl = r.gl, sun = r.sunDir;
+  const view = mat4(), proj = mat4();
+  let t: { fb: WebGLFramebuffer; tex: WebGLTexture };
+  if (reuse) {
+    const fb = gl.createFramebuffer()!;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, reuse, 0);
+    gl.drawBuffers([gl.NONE]);
+    gl.readBuffer(gl.NONE);
+    t = { fb, tex: reuse };
+  } else t = depthTarget(gl, size);
+  const D = 600;
+  lookAt(view, [cx + sun[0] * D, sun[1] * D, cz + sun[2] * D], [cx, 0, cz], [0, 1, 0]);
+  ortho(proj, h, 1, D * 2);
+  const m = multiply(mat4(), proj, view);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb);
+  gl.viewport(0, 0, size, size);
+  gl.clear(gl.DEPTH_BUFFER_BIT);
+  gl.polygonOffset(1.5, 3);
+  r.setViewProj(m);
+  scene.drawStatic();
+  scene.drawTrees();
+  r.shadowParams(t.tex);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.deleteFramebuffer(t.fb); // the texture is all that is kept
+  return { tex: t.tex, m };
+}
+
+/**
+ * Re-renders only the two sun shadow maps for the renderer's current sun direction (a lighting
+ * preset change), into the existing textures: no new GPU memory, and the contact shading (which
+ * doesn't depend on the sun) is kept.
+ */
+export function rebakeShadows(r: Renderer, scene: BakeScene, half: number, l: Lighting, area = BAKE_NEAR, sizes: BakeSizes = { near: 2048, far: 2048, ao: 1024 }): Lighting {
+  const gl = r.gl;
+  const vp = gl.getParameter(gl.VIEWPORT) as Int32Array;
+  r.baking = true;
+  gl.enable(gl.POLYGON_OFFSET_FILL);
+  const n = sunPass(r, scene, area.x, area.z, area.half * 1.05, sizes.near, l.shadowN);
+  const f = sunPass(r, scene, 0, 0, half * 1.2, sizes.far, l.shadowF);
+  gl.disable(gl.POLYGON_OFFSET_FILL);
+  gl.polygonOffset(0, 0);
+  gl.viewport(vp[0], vp[1], vp[2], vp[3]);
+  r.baking = false;
+  const out: Lighting = { ...l, shadowMN: n.m, shadowMF: f.m };
+  r.setLighting(out);
+  return out;
+}
+
 export interface BakeSizes { near: number; far: number; ao: number }
 
 /** Renders the shadow and contact-shading maps and installs them in the renderer. */
 export function bakeLighting(r: Renderer, scene: BakeScene, half: number, sizes: BakeSizes = { near: 2048, far: 2048, ao: 1024 }): Lighting {
   const gl = r.gl;
   const vp = gl.getParameter(gl.VIEWPORT) as Int32Array;
-  const sun = r.sunDir;
   const tmp = mat4(), view = mat4(), proj = mat4();
   r.baking = true;
   gl.enable(gl.POLYGON_OFFSET_FILL);
-  const sunPass = (cx: number, cz: number, h: number, size: number): { tex: WebGLTexture; m: Float32Array } => {
-    const t = depthTarget(gl, size);
-    const D = 600;
-    lookAt(view, [cx + sun[0] * D, sun[1] * D, cz + sun[2] * D], [cx, 0, cz], [0, 1, 0]);
-    ortho(proj, h, 1, D * 2);
-    const m = multiply(mat4(), proj, view);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb);
-    gl.viewport(0, 0, size, size);
-    gl.clear(gl.DEPTH_BUFFER_BIT);
-    gl.polygonOffset(1.5, 3);
-    r.setViewProj(m);
-    scene.drawStatic();
-    scene.drawTrees();
-    r.shadowParams(t.tex);
-    return { tex: t.tex, m };
-  };
-  const nearPass = sunPass(BAKE_NEAR.x, BAKE_NEAR.z, BAKE_NEAR.half * 1.05, sizes.near);
-  const farPass = sunPass(0, 0, half * 1.2, sizes.far);
+  const nearPass = sunPass(r, scene, BAKE_NEAR.x, BAKE_NEAR.z, BAKE_NEAR.half * 1.05, sizes.near);
+  const farPass = sunPass(r, scene, 0, 0, half * 1.2, sizes.far);
   // top-down height map over the detailed area (static geometry only: no tree canopies)
   const top = 120, range = 140;
   const hm = depthTarget(gl, sizes.ao);

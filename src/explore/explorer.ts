@@ -3,7 +3,7 @@
 // code lives here, so the rules can be tested directly. Nothing runs on a timer.
 import { DEFAULT_LANDMARK, LANDMARKS, landmarkById, type Landmark, type Viewpoint } from './landmarks';
 import { NavField, type NavClass } from './nav';
-import { SCALE_MAX, SCALE_MIN, loadPrefs, savePrefs, type ExplorerPrefs, type KeyValueStore, type LoadResult } from './prefs';
+import { SCALE_MAX, SCALE_MIN, loadPrefs, savePrefs, type ExplorerPrefs, type KeyValueStore, type LoadResult, type LightMode } from './prefs';
 
 export type Mode = 'miniature' | 'street';
 
@@ -266,6 +266,12 @@ export class Explorer {
 
   setPref<K extends 'labels' | 'lowDetail' | 'reducedMotion' | 'seated'>(k: K, v: boolean): void {
     this.prefs[k] = v;
+    this.changed(true);
+  }
+
+  setLight(mode: LightMode): void {
+    if (this.prefs.light === mode) return;
+    this.prefs.light = mode;
     this.changed(true);
   }
 

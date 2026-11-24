@@ -45,8 +45,8 @@ The 20-minute figure is the product promise, **not a measured duration**. Nobody
    | The Saatchi Gallery portico | (64, 58) | the portico |
    | King's Road at Markham Square | (−287, 217) | the streetscape across the road |
 
-   Retaking replaces the image. The collection shows six slots with images and place names, "3 of 6", a large view, and a hint toggle. There are no scores, countdowns or penalties.
-5. **Ending.** Closing the last stop's story reveals a quiet message: "You've reached the end of the walk". It shows the stops and postcards so far, and the collection. It offers **View postcards**, **Continue exploring** and **Return to Sloane Square**. You can finish with postcards missing; the message says they will be waiting. There is no sunset button.
+   A retake shows the new photo beside the current one, and the visitor chooses which to keep (added with [golden hour](golden-hour.md)). The collection shows six slots with images and place names, "3 of 6", a large view, and a hint toggle. There are no scores, countdowns or penalties.
+5. **Ending.** Closing the last stop's story reveals a quiet message: "You've reached the end of the walk". It shows the stops and postcards so far, and the collection. It offers **View my postcards**, **Explore at golden hour** and **Continue exploring** (updated with [golden hour](golden-hour.md); *Return to Sloane Square* stays in the toolbar and the VR panel). You can finish with postcards missing; the message says they will be waiting. There is no sunset button.
 
 ## How postcards are captured
 

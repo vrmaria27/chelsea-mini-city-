@@ -2,6 +2,7 @@
 // essential control is available in the headset without HTML overlays.
 import { UI_FONT } from '../engine/text';
 import { LANDMARKS } from '../explore/landmarks';
+import { VIEWPOINTS } from '../visit/route';
 
 export type Action =
   | 'toStreet' | 'toMiniature' | 'rotL' | 'rotR' | 'scaleDown' | 'scaleUp' | 'resetView'
@@ -11,7 +12,9 @@ export type Action =
   | 'welcomeFree' | 'welcomeDiscover' | 'welcomeClose' | 'welcome' | `tab:${PanelTab}`
   | 'routeStart' | 'routeLeave' | 'storyListen' | 'storyPause' | 'storyResume' | 'storyReplay' | 'storyDetail' | 'storyClose' | 'doneClose'
   | 'nextStop' | 'skipStop' | 'home' | 'capture' | `card:${string}` | 'hint' | 'postcards'
-  | 'sndMute' | 'sndAmbience' | 'sndNarration' | 'smooth' | 'hideUI' | 'guide';
+  | 'sndMute' | 'sndAmbience' | 'sndNarration' | 'smooth' | 'hideUI' | 'guide'
+  // lighting, peaceful viewpoints, postcard replacement
+  | 'light:day' | 'light:golden' | 'doneLight' | 'pauseHere' | 'resume' | 'replaceYes' | 'replaceNo' | `view:${string}`;
 
 export type PanelTab = 'explore' | 'discover' | 'postcards' | 'sound';
 
@@ -28,7 +31,7 @@ export interface VisitPanel {
   narration: 'idle' | 'speaking' | 'paused' | 'unavailable';
   stopsDone: number;
   stopsTotal: number;
-  cards: { id: string; place: string; clue: string; hint: string; have: boolean }[];
+  cards: { id: string; place: string; clue: string; hint: string; have: boolean; light: 'day' | 'golden' | null }[];
   selectedCard: string | null;
   showHint: boolean;
   cardCount: number;
@@ -36,7 +39,15 @@ export interface VisitPanel {
   sound: { muted: boolean; ambience: boolean; narration: boolean };
   smooth: boolean;
   guide: boolean;
+  /** Current lighting preset. */
+  light: 'day' | 'golden';
+  /** Standing at a peaceful viewpoint: offer "Pause here". */
+  viewpoint: { title: string; line: string } | null;
+  /** A retaken postcard waiting for the visitor to replace the old one or keep it. */
+  replace: { id: string; place: string; oldLight: 'day' | 'golden'; newLight: 'day' | 'golden' } | null;
 }
+
+const LIGHT_NAME = { day: 'Daylight', golden: 'Golden hour' } as const;
 
 export interface PanelState {
   mode: 'miniature' | 'street';
@@ -103,12 +114,13 @@ export class ExplorePanel {
     const s = this.state!;
     const v = s.visit;
     if (v?.welcome) { this.layoutWelcome(); return; }
+    if (v?.replace) { this.layoutReplace(v); return; }
     if (v?.completion) { this.layoutCompletion(v); return; }
     const out: Btn[] = [];
     const P = 28;
     let y = 96;
     if (v) {
-      const tabs: [PanelTab, string][] = [['explore', 'Explore'], ['discover', 'Discover'], ['postcards', `Postcards ${v.cardCount}/6`], ['sound', 'Sound & comfort']];
+      const tabs: [PanelTab, string][] = [['explore', 'Explore'], ['discover', 'Discover'], ['postcards', `Postcards ${v.cardCount}/6`], ['sound', 'Light & settings']];
       const tw = (W - P * 2 - 30) / 4;
       tabs.forEach(([t, label], i) => out.push({ action: `tab:${t}`, label, x: P + i * (tw + 10), y, w: tw, h: 56, on: v.tab === t, small: true }));
       y += 72;
@@ -117,6 +129,10 @@ export class ExplorePanel {
         if (v.tab === 'discover') this.layoutDiscover(v, y);
         else if (v.tab === 'postcards') this.layoutPostcards(v, y);
         else this.layoutSound(v, y);
+        if (v.viewpoint) {
+          // the offer sits below every tab's content
+          this.buttons.push({ action: 'pauseHere', label: `Pause here · ${v.viewpoint.title}`, x: P, y: 1030, w: W - P * 2, h: 84, primary: true });
+        }
         return;
       }
     }
@@ -145,6 +161,7 @@ export class ExplorePanel {
     y += 32 + Math.ceil(LANDMARKS.length / 2) * 50 + 10;
     this.infoY = y;
     if (s.mode === 'street' && s.endReturn) out.push({ action: 'returnFromEnd', label: `↩ ${s.endReturn}`, x: W - 28 - 360, y: y + 72, w: 344, h: 50, primary: true, small: true });
+    else if (s.mode === 'street' && v?.viewpoint) out.push({ action: 'pauseHere', label: 'Pause here', x: W - 28 - 300, y: y + 70, w: 284, h: 54, primary: true, small: true });
     y += 132 + 14;
     const sw = (W - P * 2 - 4 * 10) / 5;
     const settings: [Action, string, boolean][] = [
@@ -164,7 +181,7 @@ export class ExplorePanel {
   private infoY = 0;
   /** Text blocks drawn by the visitor tabs: [text, x, y, maxWidth, lineHeight, maxLines, font, colour]. */
   private texts: [string, number, number, number, number, number, string, string][] = [];
-  private thumbs: { id: string; x: number; y: number; w: number; h: number; have: boolean; place: string; on: boolean }[] = [];
+  private thumbs: { id: string; x: number; y: number; w: number; h: number; have: boolean; place: string; on: boolean; light: 'day' | 'golden' | null }[] = [];
 
   private layoutWelcome(): void {
     const P = 28;
@@ -192,10 +209,27 @@ export class ExplorePanel {
     ];
     this.thumbs = this.cardGrid(v, 330, false);
     this.buttons = [
-      { action: 'postcards', label: 'View postcards', x: P, y: 860, w: 300, h: 72, primary: true, small: true },
-      { action: 'doneClose', label: 'Continue exploring', x: P + 312, y: 860, w: 320, h: 72, small: true },
-      { action: 'home', label: 'Return to Sloane Square', x: P + 644, y: 860, w: W - P * 2 - 644, h: 72, small: true },
+      { action: 'postcards', label: 'View my postcards', x: P, y: 860, w: 300, h: 72, primary: true, small: true },
+      { action: 'doneLight', label: v.light === 'day' ? 'Explore at golden hour' : 'Explore in daylight', x: P + 312, y: 860, w: 340, h: 72, small: true },
+      { action: 'doneClose', label: 'Continue exploring', x: P + 664, y: 860, w: W - P * 2 - 664, h: 72, small: true },
       { action: 'exitVR', label: 'Exit VR', x: W - P - 260, y: 990, w: 260, h: 56, small: true },
+    ];
+  }
+
+  private layoutReplace(v: VisitPanel): void {
+    const P = 28, r = v.replace!;
+    const gw = (W - P * 2 - 24) / 2, gh = gw * 2 / 3 + 50;
+    this.texts = [
+      ['Replace your postcard?', P + 8, 110, W - 80, 52, 1, `700 42px ${UI_FONT}`, C.ink],
+      [`${r.place}: you already have this postcard. Keep the one you have, or replace it with the new photo.`, P + 8, 176, W - 80, 32, 3, `500 26px ${UI_FONT}`, C.soft],
+    ];
+    this.thumbs = [
+      { id: r.id, x: P, y: 290, w: gw, h: gh, have: true, place: `Current · ${LIGHT_NAME[r.oldLight]}`, on: false, light: null },
+      { id: `${r.id}:new`, x: P + gw + 24, y: 290, w: gw, h: gh, have: true, place: `New · ${LIGHT_NAME[r.newLight]}`, on: true, light: null },
+    ];
+    this.buttons = [
+      { action: 'replaceYes', label: 'Replace with the new photo', x: P, y: 290 + gh + 60, w: gw, h: 80, primary: true, small: true },
+      { action: 'replaceNo', label: 'Keep the current one', x: P + gw + 24, y: 290 + gh + 60, w: gw, h: 80, small: true },
     ];
   }
 
@@ -204,7 +238,7 @@ export class ExplorePanel {
     return v.cards.map((c, i) => {
       const x = P + (i % 3) * (gw + 16), y = y0 + Math.floor(i / 3) * (gh + 16);
       if (buttons) this.buttons.push({ action: `card:${c.id}`, label: '', x, y, w: gw, h: gh, small: true });
-      return { id: c.id, x, y, w: gw, h: gh, have: c.have, place: c.place, on: v.selectedCard === c.id };
+      return { id: c.id, x, y, w: gw, h: gh, have: c.have, place: c.place, on: v.selectedCard === c.id, light: c.light };
     });
   }
 
@@ -218,6 +252,7 @@ export class ExplorePanel {
       this.texts.push([`${v.stopsDone} of ${v.stopsTotal} stops visited so far.`, P + 8, y + 290, W - 80, 30, 1, `600 25px ${UI_FONT}`, C.green]);
       out.push({ action: 'routeStart', label: v.stopsDone ? 'Resume the walk' : 'Start the walk', x: P, y: y + 330, w: 460, h: 76, primary: true });
       out.push({ action: 'home', label: 'Return to Sloane Square', x: P + 476, y: y + 330, w: W - P * 2 - 476, h: 76, small: true });
+      this.viewpointRow(y + 450);
       return;
     }
     if (v.story) {
@@ -247,6 +282,14 @@ export class ExplorePanel {
     out.push({ action: 'routeLeave', label: 'Explore freely', x: P + (bw + 10) * 2, y: y + 330, w: bw, h: 72, small: true });
     out.push({ action: 'guide', label: `Ground ring ${v.guide ? 'on' : 'off'}`, x: P, y: y + 414, w: bw, h: 56, small: true, on: v.guide });
     out.push({ action: 'home', label: 'Return to Sloane Square', x: P + bw + 10, y: y + 414, w: bw * 2 + 10, h: 56, small: true });
+    this.viewpointRow(y + 520);
+  }
+
+  /** "Quiet viewpoints": places to stop and look; going there is the visitor's choice. */
+  private viewpointRow(y: number): void {
+    const P = 28, bw = (W - P * 2 - 20) / 3;
+    this.texts.push(['Quiet viewpoints', P + 8, y + 18, W - 80, 36, 1, `700 28px ${UI_FONT}`, C.ink]);
+    VIEWPOINTS.forEach((v, i) => this.buttons.push({ action: `view:${v.id}`, label: v.short, x: P + i * (bw + 10), y: y + 46, w: bw, h: 64, small: true }));
   }
 
   private layoutPostcards(v: VisitPanel, y: number): void {
@@ -265,23 +308,30 @@ export class ExplorePanel {
   }
 
   private layoutSound(v: VisitPanel, y: number): void {
-    const P = 28, out = this.buttons, bw = (W - P * 2 - 20) / 3;
-    this.texts = [['Sound', P + 8, y + 30, W - 80, 40, 1, `700 30px ${UI_FONT}`, C.ink], ['Comfort and view', P + 8, y + 210, W - 80, 40, 1, `700 30px ${UI_FONT}`, C.ink]];
+    const P = 28, out = this.buttons, bw = (W - P * 2 - 20) / 3, hw = (W - P * 2 - 10) / 2;
+    this.texts = [
+      ['Light', P + 8, y + 30, W - 80, 40, 1, `700 30px ${UI_FONT}`, C.ink],
+      ['Sound', P + 8, y + 190, W - 80, 40, 1, `700 30px ${UI_FONT}`, C.ink],
+      ['Comfort and view', P + 8, y + 350, W - 80, 40, 1, `700 30px ${UI_FONT}`, C.ink],
+    ];
     this.thumbs = [];
-    out.push({ action: 'sndMute', label: v.sound.muted ? 'All sound: muted' : 'All sound: on', x: P, y: y + 64, w: bw, h: 72, on: !v.sound.muted, small: true });
-    out.push({ action: 'sndAmbience', label: `Ambience ${v.sound.ambience ? 'on' : 'off'}`, x: P + bw + 10, y: y + 64, w: bw, h: 72, on: v.sound.ambience, small: true });
-    out.push({ action: 'sndNarration', label: `Narration ${v.sound.narration ? 'on' : 'off'}`, x: P + (bw + 10) * 2, y: y + 64, w: bw, h: 72, on: v.sound.narration, small: true });
+    out.push({ action: 'light:day', label: 'Daylight', x: P, y: y + 64, w: hw, h: 76, on: v.light === 'day', small: true });
+    out.push({ action: 'light:golden', label: 'Golden hour', x: P + hw + 10, y: y + 64, w: hw, h: 76, on: v.light === 'golden', small: true });
+    out.push({ action: 'sndMute', label: v.sound.muted ? 'All sound: muted' : 'All sound: on', x: P, y: y + 224, w: bw, h: 72, on: !v.sound.muted, small: true });
+    out.push({ action: 'sndAmbience', label: `Ambience ${v.sound.ambience ? 'on' : 'off'}`, x: P + bw + 10, y: y + 224, w: bw, h: 72, on: v.sound.ambience, small: true });
+    out.push({ action: 'sndNarration', label: `Narration ${v.sound.narration ? 'on' : 'off'}`, x: P + (bw + 10) * 2, y: y + 224, w: bw, h: 72, on: v.sound.narration, small: true });
     const s = this.state!;
-    out.push({ action: 'smooth', label: `Smooth walking ${v.smooth ? 'on' : 'off'}`, x: P, y: y + 244, w: bw, h: 64, on: v.smooth, small: true });
-    out.push({ action: 'snap', label: `Snap turn ${s.snapTurnDeg}°`, x: P + bw + 10, y: y + 244, w: bw, h: 64, small: true });
-    out.push({ action: 'seated', label: `Seated ${s.seated ? 'on' : 'off'}`, x: P + (bw + 10) * 2, y: y + 244, w: bw, h: 64, on: s.seated, small: true });
-    out.push({ action: 'reducedMotion', label: `Less motion ${s.reducedMotion ? 'on' : 'off'}`, x: P, y: y + 320, w: bw, h: 64, on: s.reducedMotion, small: true });
-    out.push({ action: 'lowDetail', label: `Low detail ${s.lowDetail ? 'on' : 'off'}`, x: P + bw + 10, y: y + 320, w: bw, h: 64, on: s.lowDetail, small: true });
-    out.push({ action: 'hideUI', label: 'Hide this panel', x: P + (bw + 10) * 2, y: y + 320, w: bw, h: 64, small: true });
-    out.push({ action: 'welcome', label: 'Welcome screen', x: P, y: y + 396, w: bw, h: 64, small: true });
-    out.push({ action: 'home', label: 'Return to Sloane Square', x: P + bw + 10, y: y + 396, w: bw * 2 + 10, h: 64, small: true });
-    out.push({ action: 'exitVR', label: 'Exit VR', x: P, y: y + 472, w: bw, h: 56, small: true });
-    this.texts.push(['Smooth walking: push the left thumbstick to walk; the right one turns. The hidden panel comes back with the X or Y button.', P + 8, y + 560, W - 80, 28, 3, `500 22px ${UI_FONT}`, C.soft]);
+    const r1 = y + 384, r2 = r1 + 76, r3 = r2 + 76, r4 = r3 + 76;
+    out.push({ action: 'smooth', label: `Smooth walking ${v.smooth ? 'on' : 'off'}`, x: P, y: r1, w: bw, h: 64, on: v.smooth, small: true });
+    out.push({ action: 'snap', label: `Snap turn ${s.snapTurnDeg}°`, x: P + bw + 10, y: r1, w: bw, h: 64, small: true });
+    out.push({ action: 'seated', label: `Seated ${s.seated ? 'on' : 'off'}`, x: P + (bw + 10) * 2, y: r1, w: bw, h: 64, on: s.seated, small: true });
+    out.push({ action: 'reducedMotion', label: `Less motion ${s.reducedMotion ? 'on' : 'off'}`, x: P, y: r2, w: bw, h: 64, on: s.reducedMotion, small: true });
+    out.push({ action: 'lowDetail', label: `Low detail ${s.lowDetail ? 'on' : 'off'}`, x: P + bw + 10, y: r2, w: bw, h: 64, on: s.lowDetail, small: true });
+    out.push({ action: 'hideUI', label: 'Hide this panel', x: P + (bw + 10) * 2, y: r2, w: bw, h: 64, small: true });
+    out.push({ action: 'welcome', label: 'Welcome screen', x: P, y: r3, w: bw, h: 64, small: true });
+    out.push({ action: 'home', label: 'Return to Sloane Square', x: P + bw + 10, y: r3, w: bw * 2 + 10, h: 64, small: true });
+    out.push({ action: 'exitVR', label: 'Exit VR', x: P, y: r4, w: bw, h: 56, small: true });
+    this.texts.push(['Smooth walking: push the left thumbstick to walk; the right one turns. The hidden panel comes back with the X or Y button.', P + 8, r4 + 88, W - 80, 28, 2, `500 22px ${UI_FONT}`, C.soft]);
   }
 
   draw(): void {
@@ -297,7 +347,7 @@ export class ExplorePanel {
     if (!s) return;
     c.textBaseline = 'middle';
     const v = s.visit;
-    if (v && (v.welcome || v.completion || v.tab !== 'explore')) { this.drawVisit(); return; }
+    if (v && (v.welcome || v.completion || v.replace || v.tab !== 'explore')) { this.drawVisit(); return; }
     c.fillStyle = C.ink;
     c.font = `700 44px ${UI_FONT}`;
     c.fillText('Chelsea Explorer', 28, 50);
@@ -311,6 +361,8 @@ export class ExplorePanel {
     c.fillStyle = C.soft;
     c.font = `700 24px ${UI_FONT}`;
     c.fillText('PLACES', 30, placesY);
+    // the information box first: buttons placed inside it (Pause here, Return to …) draw on top
+    this.drawInfo();
     for (const b of this.buttons) {
       const hov = this.hover === b.action;
       rr(c, b.x, b.y, b.w, b.h, 14);
@@ -325,8 +377,6 @@ export class ExplorePanel {
       c.fillText(fit(c, b.label, b.w - 16), b.x + b.w / 2, b.y + b.h / 2 + 1);
       c.textAlign = 'left';
     }
-    // Information box (selected place, notice or About text)
-    this.drawInfo();
   }
 
   private drawButtons(): void {
@@ -350,7 +400,7 @@ export class ExplorePanel {
 
   private drawVisit(): void {
     const c = this.ctx, s = this.state!, v = s.visit!;
-    if (!v.welcome && !v.completion) {
+    if (!v.welcome && !v.completion && !v.replace) {
       c.fillStyle = C.ink;
       c.font = `700 40px ${UI_FONT}`;
       c.fillText('Chelsea Explorer', 28, 48);
@@ -369,6 +419,16 @@ export class ExplorePanel {
         c.save(); rr(c, t.x + 8, t.y + 8, t.w - 16, t.h - 58, 8); c.clip();
         c.drawImage(img, t.x + 8, t.y + 8, t.w - 16, t.h - 58);
         c.restore();
+        if (t.light) {
+          // discreet lighting badge in the image's corner
+          c.font = `600 19px ${UI_FONT}`;
+          const label = LIGHT_NAME[t.light], bw = c.measureText(label).width + 18;
+          rr(c, t.x + 14, t.y + t.h - 50 - 34, bw, 28, 14);
+          c.fillStyle = 'rgba(250,246,238,0.88)';
+          c.fill();
+          c.fillStyle = t.light === 'golden' ? '#8a5a17' : C.soft;
+          c.fillText(label, t.x + 23, t.y + t.h - 50 - 19);
+        }
       } else {
         c.fillStyle = C.soft;
         c.font = `600 70px ${UI_FONT}`;
@@ -399,7 +459,9 @@ export class ExplorePanel {
     c.font = `700 28px ${UI_FONT}`;
     c.fillText(fit(c, s.title, W - 90), 44, y0 + 28);
     c.font = `500 23px ${UI_FONT}`;
-    wrap(c, s.body, 44, y0 + 62, W - 90, 29, 3);
+    // leave room for a button inside the box
+    const inBox = this.buttons.some((b) => b.y > y0 && b.y < y0 + 132);
+    wrap(c, s.body, 44, y0 + 62, inBox ? W - 90 - 330 : W - 90, 29, 3);
   }
 }
 

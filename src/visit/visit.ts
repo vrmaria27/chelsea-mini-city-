@@ -2,8 +2,8 @@
 // and the sound settings. Pure logic (no DOM, rendering or audio), so the rules can be tested directly.
 // Saved locally under its own versioned key; a missing, malformed or outdated save starts afresh, and a
 // failing store never stops the visit (the state simply lives for the session).
-import type { KeyValueStore } from '../explore/prefs';
-import { POSTCARDS, STOPS, type Postcard, type Stop } from './route';
+import type { KeyValueStore, LightMode } from '../explore/prefs';
+import { POSTCARDS, STOPS, VIEWPOINTS, type Postcard, type Stop, type Viewpoint } from './route';
 import routePaths from './routePaths.json';
 
 export const VISIT_KEY = 'chelsea-explorer-visit';
@@ -21,6 +21,11 @@ export interface VisitState {
   completed: boolean;
   /** Postcards taken: id → capture time (ms). The images live in IndexedDB (photos.ts). */
   postcards: Record<string, number>;
+  /**
+   * Lighting each postcard was taken in (added with the golden-hour presets). Postcards saved before
+   * then have no entry and were all taken in daylight, which is what they read as.
+   */
+  postcardLight: Record<string, LightMode>;
   sound: { muted: boolean; ambience: boolean; narration: boolean };
   /** Interface hidden (restored with the "Show interface" button or H). */
   uiHidden: boolean;
@@ -31,7 +36,7 @@ export interface VisitState {
 }
 
 export function defaultVisit(): VisitState {
-  return { version: VISIT_VERSION, welcomeSeen: false, mode: 'free', visited: [], skipped: [], completed: false, postcards: {}, sound: { muted: false, ambience: true, narration: true }, uiHidden: false, guide: true, smooth: false };
+  return { version: VISIT_VERSION, welcomeSeen: false, mode: 'free', visited: [], skipped: [], completed: false, postcards: {}, postcardLight: {}, sound: { muted: false, ambience: true, narration: true }, uiHidden: false, guide: true, smooth: false };
 }
 
 export function loadVisit(store: KeyValueStore): { state: VisitState; status: 'none' | 'ok' | 'malformed' | 'unsupported-version' } {
@@ -47,6 +52,8 @@ export function loadVisit(store: KeyValueStore): { state: VisitState; status: 'n
     const list = (a: unknown) => (Array.isArray(a) ? a.filter((x): x is string => typeof x === 'string' && ids.has(x)) : []);
     const cards: Record<string, number> = {};
     if (v.postcards && typeof v.postcards === 'object') for (const [k, t] of Object.entries(v.postcards)) if (pids.has(k) && typeof t === 'number') cards[k] = t;
+    const lights: Record<string, LightMode> = {};
+    if (v.postcardLight && typeof v.postcardLight === 'object') for (const [k, m] of Object.entries(v.postcardLight)) if (k in cards && (m === 'day' || m === 'golden')) lights[k] = m;
     const s = (v.sound ?? {}) as Partial<VisitState['sound']>;
     return {
       state: {
@@ -57,6 +64,7 @@ export function loadVisit(store: KeyValueStore): { state: VisitState; status: 'n
         skipped: [...new Set(list(v.skipped))],
         completed: !!v.completed,
         postcards: cards,
+        postcardLight: lights,
         sound: { muted: typeof s.muted === 'boolean' ? s.muted : d.sound.muted, ambience: typeof s.ambience === 'boolean' ? s.ambience : d.sound.ambience, narration: typeof s.narration === 'boolean' ? s.narration : d.sound.narration },
         uiHidden: !!v.uiHidden,
         guide: typeof v.guide === 'boolean' ? v.guide : true,
@@ -263,10 +271,34 @@ export class Visit {
     return { ok: true, postcard: c.p, retake: c.p.id in this.state.postcards };
   }
 
-  /** Records a postcard (its image is stored separately). */
-  award(id: string, time = Date.now()): void {
+  /** Records a postcard and the lighting it was taken in (its image is stored separately). */
+  award(id: string, time = Date.now(), light: LightMode = 'day'): void {
     this.state.postcards[id] = time;
+    this.state.postcardLight[id] = light;
     this.changed();
+  }
+
+  /** Lighting a collected postcard was taken in (older postcards: daylight). */
+  postcardLightOf(id: string): LightMode | null {
+    return id in this.state.postcards ? this.state.postcardLight[id] ?? 'day' : null;
+  }
+
+  // ---- peaceful viewpoints -----------------------------------------------------------------------
+
+  /** "Pause here": interface and guidance hidden while the visitor enjoys the view (not saved). */
+  paused = false;
+
+  /** The viewpoint the visitor is standing at (within its radius), if any. */
+  viewpointAt(x: number, z: number): Viewpoint | null {
+    for (const v of VIEWPOINTS) if (Math.hypot(x - v.at.x, z - v.at.z) <= v.radius) return v;
+    return null;
+  }
+
+  /** Enters or leaves the pause. Nothing about the visitor's position or view changes. */
+  setPaused(v: boolean): void {
+    if (this.paused === v) return;
+    this.paused = v;
+    this.changed(false);
   }
 
   // ---- settings -----------------------------------------------------------------------------------

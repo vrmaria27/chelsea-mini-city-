@@ -18,6 +18,14 @@ A first visit starts at street level in Sloane Square with a short welcome: **Ex
 
 Shortcuts: **P** take a postcard, **C** postcards, **H** hide or show the interface. In VR, **A** takes a postcard and **X/Y** hides the panel. Details, sources, tests and the headset checklist are in [docs/visitor-route.md](docs/visitor-route.md).
 
+## Golden hour and quiet viewpoints
+
+**Settings → Light** (in VR: the *Light & settings* tab) switches between **Daylight** and **Golden hour**, a warm, low late-afternoon sun with long shadows. You stay exactly where you are, and the choice is saved.
+
+Three **quiet viewpoints** (beside the Venus Fountain, in Duke of York Square and along the Saatchi Gallery) offer **Pause here**. It hides the interface and guidance until you press a key or controller button.
+
+Postcards remember the light they were taken in. A retake shows the new photo beside the old one so you can choose which to keep, and on desktop a postcard can be downloaded. Details, measurements and the headset checklist are in [docs/golden-hour.md](docs/golden-hour.md).
+
 ## How to explore
 
 1. **Look at the miniature.** Drag to turn it, scroll to zoom, and use Rotate, Larger and Smaller to adjust the model. The north indicator follows your view.
@@ -292,7 +300,7 @@ Open the printed `https://192.168.x.x:5173/` on the Quest and accept the self-si
 
 ## Manual headset checklist (Quest 3)
 
-Not yet verified on a headset. See [docs/visitor-route.md](docs/visitor-route.md#manual-quest-3-checklist-not-yet-verified-on-a-headset), [docs/explorer.md](docs/explorer.md#manual-quest-3-checklist), plus the detail checklists in [docs/sloane-square.md](docs/sloane-square.md#manual-headset-checklist-sloane-square) and [docs/square-buildings.md](docs/square-buildings.md#manual-quest-review-checklist-square-buildings).
+Not yet verified on a headset. See [docs/golden-hour.md](docs/golden-hour.md#manual-quest-3-checklist-not-verified-on-a-headset), [docs/visitor-route.md](docs/visitor-route.md#manual-quest-3-checklist-not-yet-verified-on-a-headset), [docs/explorer.md](docs/explorer.md#manual-quest-3-checklist), plus the detail checklists in [docs/sloane-square.md](docs/sloane-square.md#manual-headset-checklist-sloane-square) and [docs/square-buildings.md](docs/square-buildings.md#manual-quest-review-checklist-square-buildings).
 
 ## Project layout
 
@@ -319,7 +327,7 @@ public/             index.html (HUD markup and styles)
 **Technical notes:**
 - **Renderer.** A small hand-written WebGL2 + WebXR renderer bundled with esbuild, with no runtime dependencies.
 - **One scene for both views.** The static scenery is built once and split into 6 × 6 tiles for frustum culling. The miniature and street level draw the same meshes through different model matrices. In VR the model is placed under you; your viewpoint is never moved.
-- **Lighting.** Hemisphere + sun, with no shadows, reflections or post-processing.
+- **Lighting.** Two presets (Daylight, Golden hour; `src/view/lighting.ts`): sun, sky and ground ambient, reflected sky and exposure as shader uniforms, with sun shadows baked into two static shadow maps and re-baked into the same textures when the preset changes. No real-time shadows or post-processing.
 - **Measurements.** Before/after figures are in [docs/explorer.md](docs/explorer.md#performance). Frame rate on Quest 3 has **not** been measured.
 
 ## Known limitations

@@ -8,7 +8,9 @@ import { compose, invert, mat4, multiply, transformPoint, type Mat4, type Vec3 }
 import { buildAtlas, pushFlatLabel, uprightQuad } from '../engine/text';
 import { drawLeafAtlas } from '../map/landmarks/leafAtlas';
 import { ExplorePanel } from './panel';
-import { bakeLighting } from './bake';
+import { bakeLighting, rebakeShadows, type BakeScene } from './bake';
+import { PRESETS, skyDome, type LightPreset } from './lighting';
+import type { LightMode } from '../explore/prefs';
 
 /** Depth of the wooden plinth below street level (map metres) in the miniature. */
 const PLINTH_DEPTH = 16;
@@ -174,7 +176,7 @@ export class ExplorerScene {
     this.setMiniature();
     // baked sun shadows and contact shading (once: the sun is fixed in map space)
     const t0 = performance.now();
-    bakeLighting(r, {
+    this.bakeScene = {
       drawStatic: () => {
         for (const t of this.tiles) r.drawLit(t.mesh, identityM, { world: true });
         for (const t of this.lodTiles) if (t.detail ?? t.simple) r.drawLit((t.detail ?? t.simple)!.mesh, identityM, { world: true });
@@ -186,7 +188,9 @@ export class ExplorerScene {
         r.drawNature(n.core, identityM, { mode: 0, time: 0, sway: 0 });
         r.drawNature(n.cards, identityM, { mode: 1, time: 0, sway: 0, texture: n.leaf, doubleSided: true });
       },
-    }, map.half);
+    };
+    this.mapHalf = map.half;
+    this.lighting = bakeLighting(r, this.bakeScene, map.half);
     this.bakeMs = performance.now() - t0;
     // surface detail textures (CC0, public/tex): the world renders without them until they arrive
     if (typeof Image !== 'undefined') {
@@ -197,6 +201,39 @@ export class ExplorerScene {
 
   /** Time taken by the lighting bake (ms) and whether the material textures have loaded. */
   bakeMs = 0;
+  /** Time taken by the last preset change (shadow re-bake), ms. */
+  relightMs = 0;
+  private bakeScene!: BakeScene;
+  private lighting!: import('../engine/renderer').Lighting;
+  private mapHalf = 0;
+  private skyMesh: import('../engine/renderer').Mesh | null = null;
+  private domes: Partial<Record<LightMode, import('../engine/renderer').Mesh>> = {};
+  /** Current lighting preset (Daylight until setLight is called). */
+  preset: LightPreset = PRESETS.day;
+
+  /** sRGB background colour at street level for the current preset. */
+  get skyColor(): [number, number, number] { return this.preset.clear; }
+
+  /**
+   * Applies a lighting preset: sun, colours, exposure and sky, then re-bakes the two sun shadow maps
+   * for the new sun direction into the existing textures (contact shading is kept). Callers hide the
+   * switch behind a short fade; nothing about the camera or the visitor changes.
+   */
+  setLight(mode: LightMode, tune?: Partial<LightPreset>): void {
+    const p = tune ? { ...PRESETS[mode], ...tune } : PRESETS[mode];
+    const r = this.r;
+    this.preset = p;
+    const l = Math.hypot(...p.sunDir);
+    r.sunDir = [p.sunDir[0] / l, p.sunDir[1] / l, p.sunDir[2] / l];
+    r.light = { sun: [...p.sun], ambSky: [...p.ambSky], ambGnd: [...p.ambGnd], skyZen: [...p.skyZen], skyHor: [...p.skyHor] };
+    r.exposure = p.exposure;
+    // one dome per preset, built on first use and kept (a few thousand vertices)
+    if (p.dome && (!this.domes[mode] || tune)) this.domes[mode] = r.litMesh(skyDome(p), this.domes[mode]);
+    this.skyMesh = this.domes[mode] ?? null;
+    const t0 = performance.now();
+    this.lighting = rebakeShadows(r, this.bakeScene, this.mapHalf, this.lighting, p.shadowArea);
+    this.relightMs = performance.now() - t0;
+  }
   texturesReady = false;
 
   // ---- transforms -----------------------------------------------------------------------------
@@ -303,6 +340,15 @@ export class ExplorerScene {
         r.drawLit(use.mesh, this.modelM, W);
       }
       this.detailTiles = dn;
+    }
+    if (!mini && this.skyMesh) {
+      // sky dome centred on the eye (map space), drawn after the opaque scenery with the depth test
+      // on, so only the visible sky is shaded (and anything beyond its radius simply shows the
+      // preset's clear colour, which matches the dome's horizon)
+      this.worldToMap(eye, this.v3);
+      compose(this.tmp, this.v3[0], this.v3[1], this.v3[2], 0, 400);
+      multiply(this.tmp2, this.modelM, this.tmp);
+      r.drawLit(this.skyMesh, this.tmp2, { unlit: true, doubleSided: true });
     }
     for (const d of this.decals) r.drawTex(d.mesh, this.modelM, d.tex);
     if (this.nature) {
